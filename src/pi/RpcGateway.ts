@@ -46,6 +46,7 @@ export class RpcGateway implements vscode.Disposable {
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | undefined;
   private stopping = false;
+  private disposed = false;
   private killedByUs = false;
   private readonly timeoutMs: number;
   private readonly ipcEnv: Record<string, string | undefined>;
@@ -98,6 +99,7 @@ export class RpcGateway implements vscode.Disposable {
   }
 
   async start(): Promise<boolean> {
+    if (this.disposed) return false;
     if (this.child && !this.child.killed) return true;
     this.stopping = false;
     if (!vscode.workspace.isTrusted) {
@@ -150,6 +152,9 @@ export class RpcGateway implements vscode.Disposable {
     this.child = child;
     this.killedByUs = false;
     this.decoder.push(Buffer.alloc(0));
+    child.stdin.on('error', (err) => {
+      this.log.debug(`pi stdin error: ${String(err)}`);
+    });
     child.stdout.on('data', (chunk: Buffer) => {
       for (const line of this.decoder.push(chunk)) this.onLine(line);
     });
@@ -267,7 +272,7 @@ export class RpcGateway implements vscode.Disposable {
   }
 
   private scheduleRestart(): void {
-    if (this.stopping || this.restartTimer) return;
+    if (this.stopping || this.disposed || this.restartTimer) return;
     const delay = Math.min(30_000, 500 * 2 ** Math.min(this.restartAttempts, 6));
     this.restartAttempts += 1;
     this.setState({ status: 'reconnecting', error: `Pi 已退出，${delay}ms 后重连（第 ${this.restartAttempts} 次）` });
@@ -334,8 +339,25 @@ export class RpcGateway implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.stopping = true;
-    void this.stop();
+    if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = undefined; }
+    // `dispose()` is synchronous, so close stdin and escalate immediately. The
+    // async stop() path cannot be awaited by VS Code's deactivate() contract,
+    // leaving an orphan `pi --mode rpc` child behind.
+    const child = this.child;
+    if (child && !child.killed) {
+      this.killedByUs = true;
+      try { child.stdin.end(); } catch { /* already closed */ }
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      if (process.platform === 'win32' && child.pid) {
+        const { execFile } = require('node:child_process') as typeof import('node:child_process');
+        execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
+      }
+    }
+    this.child = undefined;
+    this.failPending(new Error('Pi 已停止'));
+    this.setState({ status: 'stopped' });
     for (const d of this.disposables) d.dispose();
     this.listeners.clear();
     this.stateListeners.clear();

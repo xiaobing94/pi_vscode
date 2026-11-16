@@ -2,11 +2,11 @@
   "name": "pi-vscode",
   "displayName": "Pi for VS Code",
   "description": "在 VS Code 原生侧栏里使用 Pi coding agent，并用独立的影子 Git 仓库记录每次对话带来的文件改动。",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "pi-vscode",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.90.0",
+    "vscode": "^1.96.0",
     "node": ">=22.19.0"
   },
   "extensionKind": [
@@ -33,7 +33,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/integration/*.mjs",
     "test:integration": "npm run test",
-    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies --baseContentUrl . --baseImagesUrl . --out pi-vscode-0.1.2.vsix",
+    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies --baseContentUrl . --baseImagesUrl . --out pi-vscode-0.2.0.vsix",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('media/chat/main.js',{force:true})\""
   },
   "contributes": {
@@ -44,6 +44,13 @@
           "title": "Pi (VS Code)",
           "icon": "media/pi.svg"
         }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "pi-vscode-secondary",
+          "title": "Pi",
+          "icon": "media/pi.svg"
+        }
       ]
     },
     "views": {
@@ -52,7 +59,7 @@
           "id": "pi.sessions",
           "name": "Pi 会话",
           "contextualTitle": "Pi 会话",
-          "visibility": "collapsed"
+          "visibility": "visible"
         },
         {
           "id": "pi.changes",
@@ -71,6 +78,15 @@
         {
           "id": "pi.chat",
           "name": "对话",
+          "type": "webview",
+          "contextualTitle": "Pi",
+          "visibility": "visible"
+        }
+      ],
+      "pi-vscode-secondary": [
+        {
+          "id": "pi.chatSecondary",
+          "name": "Pi 对话",
           "type": "webview",
           "contextualTitle": "Pi",
           "visibility": "visible"
@@ -98,14 +114,24 @@
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "pi.chat.focusSecondary",
+        "title": "Pi: 在右侧栏打开 / 选中 Pi",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "pi.chat.askInNativeChat",
+        "title": "Pi: 在原生 Chat 里选择 @pi",
+        "icon": "$(mention)"
+      },
+      {
         "command": "pi.newSession",
         "title": "Pi: 新建会话",
         "icon": "$(add)"
       },
       {
         "command": "pi.resumeSession",
-        "title": "Pi: 恢复会话",
-        "icon": "$(history)"
+        "title": "Pi: 历史会话（浏览并恢复）",
+        "icon": "$(versions)"
       },
       {
         "command": "pi.switchSession",
@@ -279,6 +305,21 @@
       {
         "command": "pi.switchActiveSession",
         "title": "Pi: 切换活动会话（多工作区 / 多会话）"
+      },
+      {
+        "command": "pi.openTurnEditDiff",
+        "title": "Pi: 查看最近一轮改动（原生差异）",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "pi.openSessionEditDiff",
+        "title": "Pi: 查看本会话全部改动（原生差异）",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "pi.pickTurnDiff",
+        "title": "Pi: 历史变更（按对话轮次查看改动）…",
+        "icon": "$(diff-multiple)"
       }
     ],
     "menus": {
@@ -290,17 +331,42 @@
         },
         {
           "command": "pi.openTui",
-          "when": "view == pi.chat",
+          "when": "view == pi.chat && config.pi.enableTui",
           "group": "navigation@2"
         },
         {
           "command": "pi.openChangesOverview",
+          "when": "view == pi.chat",
+          "group": "navigation@4"
+        },
+        {
+          "command": "pi.pickTurnDiff",
           "when": "view == pi.chat",
           "group": "navigation@3"
         },
         {
           "command": "pi.abort",
           "when": "view == pi.chat && pi.isStreaming",
+          "group": "navigation@5"
+        },
+        {
+          "command": "pi.newSession",
+          "when": "view == pi.chatSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pi.pickTurnDiff",
+          "when": "view == pi.chatSecondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "pi.openChangesOverview",
+          "when": "view == pi.chatSecondary",
+          "group": "navigation@3"
+        },
+        {
+          "command": "pi.abort",
+          "when": "view == pi.chatSecondary && pi.isStreaming",
           "group": "navigation@4"
         },
         {
@@ -319,9 +385,24 @@
           "group": "navigation@1"
         },
         {
+          "command": "pi.resumeSession",
+          "when": "view == pi.chat",
+          "group": "navigation@0"
+        },
+        {
+          "command": "pi.resumeSession",
+          "when": "view == pi.chatSecondary",
+          "group": "navigation@0"
+        },
+        {
           "command": "pi.mcpList",
           "when": "view == pi.agents",
           "group": "navigation@1"
+        },
+        {
+          "command": "pi.pickTurnDiff",
+          "when": "view == pi.changes",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
@@ -404,9 +485,18 @@
         {
           "command": "pi.generateCommitMessage",
           "group": "navigation"
+        },
+        {
+          "command": "pi.pickTurnDiff",
+          "group": "navigation",
+          "when": "pi.hasChanges"
         }
       ],
       "commandPalette": [
+        {
+          "command": "pi.openTui",
+          "when": "config.pi.enableTui"
+        },
         {
           "command": "pi.openTurnDiff"
         },
@@ -475,7 +565,7 @@
         "pi.enableTui": {
           "type": "boolean",
           "default": true,
-          "description": "显示「在终端中打开」入口"
+          "description": "是否启用「在终端中打开」TUI 入口（false 时菜单/斜杠命令/会话树入口一并隐藏）"
         },
         "pi.multiSession": {
           "type": "boolean",
@@ -568,12 +658,10 @@
         "pi.shadowGit.snapshotMode": {
           "type": "string",
           "enum": [
-            "settled",
-            "turn",
-            "tool",
-            "hybrid"
+            "settled"
           ],
-          "default": "hybrid"
+          "default": "settled",
+          "markdownDescription": "**已废弃**：影子仓库固定为「一轮对话一次提交」，无论此处取值如何都不会再按文件/工具重复提交。保留该键仅为兼容旧设置。"
         },
         "pi.shadowGit.baseMode": {
           "type": "string",
@@ -607,6 +695,11 @@
         "mac": "cmd+alt+p"
       },
       {
+        "command": "pi.chat.focusSecondary",
+        "key": "ctrl+alt+shift+p",
+        "mac": "cmd+alt+shift+p"
+      },
+      {
         "command": "pi.sendSelection",
         "key": "ctrl+alt+enter",
         "when": "editorHasSelection"
@@ -619,14 +712,46 @@
       {
         "command": "pi.openChangesOverview",
         "key": "ctrl+alt+d"
+      },
+      {
+        "command": "pi.openTurnEditDiff",
+        "key": "ctrl+alt+shift+d",
+        "mac": "cmd+alt+shift+d"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "pi-vscode.pi",
+        "name": "pi",
+        "fullName": "Pi",
+        "description": "让 Pi coding agent 读写代码（与侧栏共享会话）",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "model",
+            "description": "切换模型"
+          },
+          {
+            "name": "diff",
+            "description": "用原生差异查看本会话改动"
+          },
+          {
+            "name": "new",
+            "description": "新建 Pi 会话"
+          },
+          {
+            "name": "compact",
+            "description": "压缩上下文"
+          }
+        ]
       }
     ]
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "~1.95.0",
     "esbuild": "^0.24.0",
+    "marked": "^15.0.12",
     "typescript": "^5.7.0"
-  },
-  "dependencies": {}
+  }
 }

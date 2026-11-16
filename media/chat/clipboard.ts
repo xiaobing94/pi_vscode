@@ -23,6 +23,6 @@ function fallback(text: string): void {
   ta.remove();
 }
 
-export function htmlFromElement(el: HTMLElement): string {
+export function htmlFromElement(el: Element): string {
   return `<!doctype html><meta charset="utf-8">${el.outerHTML}`;
 }

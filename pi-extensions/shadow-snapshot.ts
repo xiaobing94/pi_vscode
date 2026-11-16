@@ -97,15 +97,18 @@ export default function (pi: ExtensionAPI) {
     } catch { /* host may not be running; degrade silently */ }
   }
 
-  async function readReply(turnIndex: number, timeoutMs = 2000): Promise<string | undefined> {
+  async function readReply(turnIndex: number, requestAt: number, timeoutMs = 2000): Promise<string | undefined> {
     if (!ipcDir) return undefined;
     const file = path.join(ipcDir, `t${turnIndex}.reply`);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
         const text = await fs.readFile(file, 'utf8');
-        const data = JSON.parse(text) as { commit?: string };
-        if (data.commit) return data.commit;
+        const data = JSON.parse(text) as { turn?: number; commit?: string; at?: string };
+        // A stale reply from an earlier session/turn must not be reported as
+        // this turn's snapshot commit.
+        const fresh = data.at ? Date.parse(data.at) >= requestAt - 1000 : false;
+        if (data.commit && data.turn === turnIndex && fresh) return data.commit;
       } catch { /* not ready */ }
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -127,9 +130,38 @@ export default function (pi: ExtensionAPI) {
     await writeIpc({ sessionId, turn: 0, paths: [], reason: 'session_start' });
   });
 
+  /**
+   * Pre-image capture for native VS Code diffs. `tool_call` is awaited by Pi before the
+   * tool executes, so reading here is race-free (the host only sees events afterwards).
+   */
+  async function capturePreImage(toolCallId: string, files: string[]): Promise<void> {
+    if (!ipcDir || !toolCallId || !files.length) return;
+    const dir = path.join(ipcDir, 'pre');
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      const items: Array<{ path: string; existed: boolean; content?: string; skipped?: string }> = [];
+      for (const file of files) {
+        try {
+          const st = await fs.stat(file);
+          if (!st.isFile()) continue;
+          if (st.size > 4 * 1024 * 1024) { items.push({ path: file, existed: true, skipped: 'too-large' }); continue; }
+          items.push({ path: file, existed: true, content: (await fs.readFile(file)).toString('base64') });
+        } catch { items.push({ path: file, existed: false }); }
+      }
+      const safe = toolCallId.replace(/[^A-Za-z0-9._-]/g, '_');
+      const tmp = path.join(dir, `${safe}.json.tmp`);
+      await fs.writeFile(tmp, JSON.stringify({ toolCallId, items }), 'utf8');
+      await fs.rename(tmp, path.join(dir, `${safe}.json`));
+    } catch { /* diff falls back to reverse patch on the host */ }
+  }
+
   pi.on('tool_call', async (event: any, ctx: any) => {
     const toolName = String(event.toolName ?? '');
-    for (const p of pathsFromTool(ctx.cwd ?? process.cwd(), toolName, event.input)) pending.add(p);
+    const touched = pathsFromTool(ctx.cwd ?? process.cwd(), toolName, event.input);
+    if (toolName === 'edit' || toolName === 'write' || toolName === 'multiedit' || toolName === 'apply_patch') {
+      await capturePreImage(String(event.toolCallId ?? ''), touched);
+    }
+    for (const p of touched) pending.add(p);
     note(ctx, `Pi 影子快照 · 候选 ${pending.size}`);
     await writeIpc({ sessionId, turn, paths: [...pending], toolName, reason: 'tool_call' });
   });
@@ -168,8 +200,9 @@ export default function (pi: ExtensionAPI) {
     if (settledTurn) return;
     settledTurn = true;
     const paths = [...pending];
+    const requestAt = Date.now();
     await writeIpc({ sessionId, turn, paths, prompt, reason: 'before_settle' });
-    lastCommit = await readReply(turn, 2000);
+    lastCommit = await readReply(turn, requestAt, 2000);
     note(ctx, lastCommit ? `Pi 影子快照 · ${lastCommit.slice(0, 8)}` : 'Pi 影子快照 · 待落库');
     const data = { sessionId, turn, prompt, paths, commit: lastCommit, at: new Date().toISOString() };
     const draft = { type: 'custom', customType: 'pi.shadow.snapshot', data };

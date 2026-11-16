@@ -28,15 +28,75 @@ test('extension bundle activates: views, commands, tree providers and trust gate
   const exports = loadBundle(path.join(root, 'dist', 'extension.js'), vscode);
   assert.equal(typeof exports.activate, 'function');
   await exports.activate(context);
-  for (const id of ['pi.chat', 'pi.sessions', 'pi.changes', 'pi.agents']) assert.ok(registered.has(id), `view ${id} registered`);
+  for (const id of ['pi.chat', 'pi.chatSecondary', 'pi.sessions', 'pi.changes', 'pi.agents']) assert.ok(registered.has(id), `view ${id} registered`);
   for (const name of [
     'pi.newSession', 'pi.openTui', 'pi.openChangesOverview', 'pi.openChangeDiff',
     'pi.openSessionDiff', 'pi.openExternalDir', 'pi.sendSelection', 'pi.selectModel',
     'pi.abort', 'pi.reviewChanges', 'pi.mcpList', 'pi.bugReportWizard',
+    'pi.chat.focusSecondary', 'pi.chat.askInNativeChat',
   ]) assert.ok(commands.has(name), `command ${name} registered`);
   assert.ok(context.subscriptions.length > 0, 'disposables registered in context');
+
   await exports.deactivate();
   for (const d of context.subscriptions) d.dispose?.();
   // Windows git.exe can hold the bare repo briefly; best-effort cleanup only.
+  await rm(testRoot, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+});
+
+test('both Pi views share one session: messages broadcast, replies stay local', { timeout: 30_000 }, async () => {
+  const vscode = makeVscodeMock();
+  const providers = new Map();
+  vscode.window.registerWebviewViewProvider = (id, provider) => {
+    providers.set(id, provider);
+    return new vscode.Disposable();
+  };
+  vscode.workspace.workspaceFolders = [{ name: 'proj', uri: vscode.Uri.file(path.join(root, 'test')), index: 0 }];
+  vscode.workspace.getWorkspaceFolder = () => vscode.workspace.workspaceFolders[0];
+  const testRoot = await mkdtemp(path.join(tmpdir(), 'pi-vscode-views-'));
+  const context = {
+    extensionUri: vscode.Uri.file(root),
+    globalStorageUri: vscode.Uri.file(path.join(testRoot, 'global')),
+    storageUri: vscode.Uri.file(path.join(testRoot, 'workspace')),
+    subscriptions: [],
+    globalState: { get: () => [], update: async () => {} },
+    extension: { packageJSON: { version: '0.2.0' } },
+  };
+  const exports = loadBundle(path.join(root, 'dist', 'extension.js'), vscode);
+  await exports.activate(context);
+  assert.equal(providers.get('pi.chat'), providers.get('pi.chatSecondary'), 'one provider for both views');
+
+  const makeView = (viewType) => {
+    const sent = [];
+    const listeners = [];
+    return {
+      viewType, sent, listeners,
+      webview: {
+        options: {}, html: '',
+        asWebviewUri: (u) => u,
+        postMessage: async (m) => { sent.push(m); return true; },
+        onDidReceiveMessage: (fn) => { listeners.push(fn); return new vscode.Disposable(); },
+      },
+      title: '', show() {}, onDidDispose: () => new vscode.Disposable(),
+    };
+  };
+  const left = makeView('pi.chat');
+  const right = makeView('pi.chatSecondary');
+  const provider = providers.get('pi.chat');
+  provider.resolveWebviewView(left);
+  provider.resolveWebviewView(right);
+
+  // A streaming event from the Pi gateway must appear in both views.
+  provider.onEvent({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
+  assert.ok(left.sent.some((m) => m.type === 'append'), 'left view receives broadcast');
+  assert.ok(right.sent.some((m) => m.type === 'append'), 'right view receives broadcast');
+
+  // A `ready` handshake only re-initialises the view that sent it.
+  left.sent.length = 0; right.sent.length = 0;
+  await Promise.all(left.listeners.map((fn) => Promise.resolve(fn({ type: 'ready' }))));
+  assert.ok(left.sent.some((m) => m.type === 'replace'), 'ready replies to requesting view');
+  assert.ok(!right.sent.some((m) => m.type === 'replace'), 'ready does not replay into the other view');
+
+  await exports.deactivate();
+  for (const d of context.subscriptions) d.dispose?.();
   await rm(testRoot, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
 });

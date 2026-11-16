@@ -39,6 +39,12 @@ export class Collector {
   private readonly ipcDir: string;
   readonly onSnapshotRequest = new Signal<IpcSnapshotRequest>();
   private watcher: vscode.FileSystemWatcher | undefined;
+  /** Byte offsets per sidecar file: JSONL is append-only, never replay history. */
+  private readonly ipcOffsets = new Map<string, number>();
+  /** Serialise seed + watcher reads so no line is replayed or skipped. */
+  private ipcChain: Promise<void> = Promise.resolve();
+  private lastIpcTurnValue: number | undefined;
+  private hostTurnValue = 0;
   private prompt = '';
   private toolCalls: string[] = [];
   private readonly subagents = new Map<string, { id: string; label: string; toolCalls: number }>();
@@ -52,6 +58,17 @@ export class Collector {
   }
 
   get turnId(): string { return this.currentTurnId; }
+  /** Pi extension's 1-based turn number; used to make one snapshot per conversation turn. */
+  get lastIpcTurn(): number | undefined { return this.lastIpcTurnValue; }
+  /** Host-side fallback turn number (counts user messages in RPC events). */
+  get hostTurn(): number { return this.hostTurnValue; }
+  /**
+   * Authoritative conversation-turn number. In RPC mode the host sees the user
+   * `message_start` synchronously before settle, so it wins over the sidecar
+   * (whose file watcher may lag). In TUI mode the host is idle and the pi
+   * extension's sidecar is the only source.
+   */
+  get turnNumber(): number { return this.hostTurnValue || this.lastIpcTurnValue || 0; }
   get currentPrompt(): string { return this.prompt; }
   get recentToolCalls(): string[] { return [...this.toolCalls]; }
   get activeSubagents(): Array<{ id: string; label: string; toolCalls: number }> { return [...this.subagents.values()]; }
@@ -68,37 +85,53 @@ export class Collector {
     void fs.mkdir(this.ipcDir, { recursive: true });
     const pattern = new vscode.RelativePattern(vscode.Uri.file(this.ipcDir), '*.jsonl');
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
-    const onChange = (uri: vscode.Uri) => { void this.readIpcFile(uri.fsPath); };
+    const onChange = (uri: vscode.Uri) => this.enqueueIpc(() => this.readIpcFile(uri.fsPath));
     const d1 = this.watcher.onDidChange(onChange);
     const d2 = this.watcher.onDidCreate(onChange);
-    void this.readIpcDir();
+    // Sidecar files may contain earlier sessions. Start at EOF: only new lines
+    // belong to the current run. Replaying history used to fire `aborted`
+    // requests over and over and produced a commit per file (§6.9).
+    void this.enqueueIpc(() => this.seedIpcOffsets());
     return vscode.Disposable.from(d1, d2, this.watcher, { dispose: () => { this.watcher = undefined; } });
   }
 
-  private async readIpcDir(): Promise<void> {
+  private enqueueIpc(fn: () => Promise<void>): void {
+    this.ipcChain = this.ipcChain.then(fn, fn).catch((err) => this.log.debug(`ipc: ${String(err)}`));
+  }
+
+  private async seedIpcOffsets(): Promise<void> {
     try {
-      const files = await fs.readdir(this.ipcDir);
-      for (const f of files.filter((n) => n.endsWith('.jsonl'))) await this.readIpcFile(join(this.ipcDir, f));
+      for (const f of (await fs.readdir(this.ipcDir)).filter((n) => n.endsWith('.jsonl'))) {
+        const p = join(this.ipcDir, f);
+        this.ipcOffsets.set(p, (await fs.stat(p)).size);
+      }
     } catch { /* not created yet */ }
   }
 
   private async readIpcFile(file: string): Promise<void> {
     try {
-      const text = await fs.readFile(file, 'utf8');
-      if (!/[\r\n]$/.test(text)) return; // ignore partially-written JSONL lines
-      for (const line of text.split('\n')) {
+      const buf = await fs.readFile(file);
+      let start = this.ipcOffsets.get(file) ?? 0;
+      if (start > buf.length) start = 0; // truncated / rotated
+      const lastNl = buf.lastIndexOf(0x0a);
+      const end = lastNl >= start ? lastNl + 1 : start; // keep a partial tail for the next event
+      if (end <= start) return;
+      const chunk = buf.subarray(start, end).toString('utf8');
+      this.ipcOffsets.set(file, end);
+      const lines = chunk.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line) as { paths?: string[]; sessionId?: string; turn?: number; prompt?: string; toolName?: string; reason?: string };
           for (const p of msg.paths ?? []) this.add(p, 'ipc', true);
           if (msg.prompt) this.prompt = msg.prompt;
+          const turn = Number(msg.turn ?? 0);
+          if (turn > 0) this.lastIpcTurnValue = turn;
           if (msg.reason === 'before_settle' || msg.reason === 'settled_fallback' || msg.reason === 'aborted') {
-            this.onSnapshotRequest.fire({
-              reason: msg.reason,
-              turn: Number(msg.turn ?? 0),
-              paths: msg.paths ?? [],
-              prompt: msg.prompt,
-            });
+            // Byte offsets guarantee each physical JSONL line is consumed once;
+            // onDidChange/onDidCreate cannot double-fire a settle request.
+            this.onSnapshotRequest.fire({ reason: msg.reason, turn, paths: msg.paths ?? [], prompt: msg.prompt });
           }
         } catch { /* partial line */ }
       }
@@ -113,7 +146,12 @@ export class Collector {
         const msg = event.message;
         if (msg?.role === 'user') {
           const text = messageText(msg);
-          if (text && !text.startsWith('/')) this.prompt = text;
+          if (text && !text.startsWith('/')) {
+            this.prompt = text;
+            // Only `message_start` advances the turn; `message_end` is the same
+            // message and must not double-count it.
+            if (event.type === 'message_start') this.hostTurnValue += 1;
+          }
         }
         this.addFromText(messageText(msg));
         break;

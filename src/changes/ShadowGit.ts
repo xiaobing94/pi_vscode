@@ -201,6 +201,11 @@ export class ShadowGit {
     catch { return undefined; }
   }
 
+  /** Root tree of an existing commit; used to skip turns with no real changes. */
+  async rootTreeOf(commit: string): Promise<string | undefined> {
+    return this.readRef(`${commit}^{tree}`);
+  }
+
   async listRefs(prefix: string): Promise<Array<{ ref: string; oid: string }>> {
     try {
       const out = await this.git(['for-each-ref', '--format=%(refname) %(objectname)', prefix]);
@@ -239,18 +244,61 @@ export class ShadowGit {
     await this.git(args);
   }
 
+  /**
+   * Metadata lives on a plain blob ref, NOT `git notes`: every `git notes add`
+   * creates a commit on refs/notes/pi/meta, which pollutes `git log --all`
+   * with "Notes added by ..." entries that are not conversation turns.
+   * A blob ref is reachable (survives gc) and invisible to `git log`.
+   */
   async addNote(commit: string, meta: ShadowMeta): Promise<void> {
-    await this.gitWithInput(['notes', '--ref=pi/meta', 'add', '-f', '-F', '-', commit], JSON.stringify(meta, null, 2));
+    const blob = await this.writeBlob(Buffer.from(JSON.stringify(meta, null, 2), 'utf8'));
+    await this.git(['update-ref', `refs/pi/meta/${commit}`, blob]);
   }
 
   async getNote(commit: string): Promise<ShadowMeta | undefined> {
     try {
-      const out = await this.git(['notes', '--ref=pi/meta', 'show', commit]);
+      const out = await this.git(['cat-file', 'blob', `refs/pi/meta/${commit}`]);
       return JSON.parse(out) as ShadowMeta;
-    } catch { return undefined; }
+    } catch {
+      // Legacy repos (< 0.2.1) used git notes; keep them readable.
+      try { return JSON.parse(await this.git(['notes', '--ref=pi/meta', 'show', commit])) as ShadowMeta; }
+      catch { return undefined; }
+    }
   }
 
-  async log(ref: string, limit = 200): Promise<Array<{ commit: string; parent?: string; message: string; at: string }>> {
+  async deleteNote(commit: string): Promise<void> {
+    await this.git(['update-ref', '-d', `refs/pi/meta/${commit}`]).catch(() => {});
+  }
+
+  /**
+   * One-time migration for repos created before 0.2.1: copy `git notes`
+   * metadata into blob refs, then delete refs/notes/pi/meta so its "Notes added
+   * by ..." commits disappear from `git log --all`.
+   */
+  async migrateLegacyNotes(): Promise<void> {
+    await this.ensureRepo();
+    if (await this.readRef('refs/pi/meta/schema')) return;
+    const seen = new Set<string>();
+    for (const r of [
+      ...await this.listRefs('refs/pi/sessions/'),
+      ...await this.listRefs('refs/pi/turns/'),
+    ]) {
+      for (const row of await this.commitLog(r.oid, 500)) {
+        if (seen.has(row.commit)) continue;
+        seen.add(row.commit);
+        try {
+          const legacy = JSON.parse(await this.git(['notes', '--ref=pi/meta', 'show', row.commit])) as ShadowMeta;
+          await this.addNote(row.commit, legacy);
+        } catch { /* no legacy note (or already migrated) */ }
+      }
+    }
+    await this.deleteRef('refs/notes/pi/meta');
+    const marker = await this.writeBlob(Buffer.from('2', 'utf8'));
+    await this.git(['update-ref', 'refs/pi/meta/schema', marker]);
+  }
+
+  /** Walk a commit chain. Named to avoid clashing with the Log field. */
+  async commitLog(ref: string, limit = 200): Promise<Array<{ commit: string; parent?: string; message: string; at: string }>> {
     try {
       const out = await this.git(['log', '--format=%H%x00%P%x00%s%x00%cI%x00', '-n', String(limit), ref]);
       const rows = out.split('\n').filter(Boolean);
@@ -329,6 +377,33 @@ export class ShadowGit {
     catch { return []; }
   }
 
+  /** Build the root tree without committing, so callers can detect empty turns. */
+  async composeTree(parent: string | undefined, records: Array<{ mode: string; oid: string; path: string; remove?: boolean }>): Promise<string> {
+    await this.ensureRepo();
+    const wsRecords = records.filter((r) => r.path.startsWith('workspace/'));
+    const extRecords = records.filter((r) => r.path.startsWith('external/'));
+    const wsTree = await this.buildSubtree(parent, 'workspace', wsRecords);
+    const extTree = await this.buildSubtree(parent, 'external', extRecords);
+    return this.composeRoot(wsTree, extTree);
+  }
+
+  /** Diff a proposed tree against the parent commit (or the empty tree). */
+  async diffTree(parent: string | undefined, root: string): Promise<DiffEntry[]> {
+    return this.diff(parent, root);
+  }
+
+  /** Create a commit from a prepared tree. Metadata is written exactly once. */
+  async commitTree(args: {
+    parent?: string;
+    root: string;
+    message: string;
+    meta: ShadowMeta;
+  }): Promise<string> {
+    const commit = await this.commitRoot(args.root, args.parent, args.message);
+    await this.addNote(commit, args.meta);
+    return commit;
+  }
+
   /** Create a commit from explicit path records. CAS + retry handled by SnapshotService. */
   async createCommit(args: {
     parent?: string;
@@ -337,19 +412,13 @@ export class ShadowGit {
     meta: ShadowMeta;
     records: Array<{ mode: string; oid: string; path: string; remove?: boolean }>;
   }): Promise<string> {
-    await this.ensureRepo();
-    const wsRecords = args.records.filter((r) => r.path.startsWith('workspace/'));
-    const extRecords = args.records.filter((r) => r.path.startsWith('external/'));
-    const wsTree = await this.buildSubtree(args.parent, 'workspace', wsRecords);
-    const extTree = await this.buildSubtree(args.parent, 'external', extRecords);
-    const root = await this.composeRoot(wsTree, extTree);
-    const commit = await this.commitRoot(root, args.parent, args.message);
-    await this.addNote(commit, args.meta);
-    return commit;
+    const root = await this.composeTree(args.parent, args.records);
+    return this.commitTree({ parent: args.parent, root, message: args.message, meta: args.meta });
   }
 
   async gc(retentionDays: number, pruneTurnRefs = true): Promise<void> {
     await this.ensureRepo();
+    await this.migrateLegacyNotes();
     if (pruneTurnRefs) {
       const refs = await this.listRefs('refs/pi/turns/');
       const cutoff = Date.now() - retentionDays * 86_400_000;

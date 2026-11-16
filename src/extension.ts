@@ -23,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     gateway: () => controller?.gatewayProvider(),
     snapshots: () => controller?.snapshotsProvider(),
     collector: () => controller?.collectorProvider(),
+    edits: () => controller?.editsProvider(),
     onSend: async (text, images, behavior) => controller?.send(text, images, behavior),
     onCommand: (command, ...args) => vscode.commands.executeCommand(command, ...args),
     openDiffForPath: (p) => controller?.diffForPath(p),

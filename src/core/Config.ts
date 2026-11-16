@@ -20,7 +20,8 @@ export interface PiConfigShape {
     maxTotalBytes: number;
     excludeGlobs: string[];
     redactSecrets: boolean;
-    snapshotMode: 'settled' | 'turn' | 'tool' | 'hybrid';
+    /** @deprecated 0.2.1: always one commit per finished conversation turn. Kept for settings compatibility. */
+  snapshotMode: 'settled' | 'turn' | 'tool' | 'hybrid';
     baseMode: 'auto' | 'full' | 'candidatesOnly';
     usePiExtension: boolean;
     retentionDays: number;
@@ -52,7 +53,7 @@ const DEFAULTS: PiConfigShape = {
     maxTotalBytes: 64 * 1024 * 1024,
     excludeGlobs: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/*.log', '**/.pi/agent/sessions/**'],
     redactSecrets: true,
-    snapshotMode: 'hybrid',
+    snapshotMode: 'settled',
     baseMode: 'auto',
     usePiExtension: true,
     retentionDays: 90,

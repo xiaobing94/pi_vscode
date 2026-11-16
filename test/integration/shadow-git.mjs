@@ -131,8 +131,21 @@ test('ShadowGit pure-object layer: base + 3 turns, workspace/external split, CRL
     assert.ok(t2?.changes.some((c) => c.status === 'A' && c.displayPath === 'new.ts'));
 
     // Turn 3: no changes => no extra commit (content-addressed dedupe).
-    const t3 = await s.service.snapshot({ reason: 'settled', prompt: '第三轮：什么都没改' });
+    const t3 = await s.service.snapshot({ reason: 'settled', turnIndex: 3, prompt: '第三轮：什么都没改' });
     assert.equal(t3, undefined);
+
+    // Two signals for the SAME turn must amend one commit, not append two.
+    await require('node:fs/promises').writeFile(spaceFile, 'const a = 4;\n');
+    s.collector.add(spaceFile, 'tool', true);
+    const s4a = await s.service.snapshot({ reason: 'aborted', aborted: true, turnIndex: 4, prompt: '第四轮：先中断' });
+    s.collector.add(spaceFile, 'tool', true);
+    const s4b = await s.service.snapshot({ reason: 'settled', turnIndex: 4, prompt: '第四轮：先中断' });
+    assert.ok(s4a && s4b, 'both turn-4 signals produced results');
+    assert.equal(s4b.meta.turnIndex, 4);
+    assert.equal(s4b.meta.aborted, false, 'later settle clears the aborted flag');
+    const log4 = git(['log', '--format=%H %s', s.service.headRef], s.shadow).trim().split('\n');
+    assert.equal(log4.length, 4, 'base + 3 turns, not one commit per signal');
+    assert.match(log4[0], /第 4 轮/, 'commit subject is the user question for the turn');
 
     // CAS semantics.
     const headRef = s.service.headRef;
@@ -140,12 +153,12 @@ test('ShadowGit pure-object layer: base + 3 turns, workspace/external split, CRL
     assert.throws(() => git(['update-ref', headRef, base, base], s.shadow), /expected|cannot lock ref/i);
 
     // Notes metadata and cumulative diff.
-    const note = JSON.parse(git(['notes', '--ref=pi/meta', 'show', t2.commit], s.shadow));
+    const note = JSON.parse(git(['cat-file', 'blob', `refs/pi/meta/${t2.commit}`], s.shadow));
     assert.equal(note.schema, 1);
     assert.equal(note.turnIndex, 2);
     assert.equal(note.sessionId, 'test-session-0001');
     const turns = s.service.getTurns();
-    assert.equal(turns.length, 2);
+    assert.equal(turns.length, 3);
     const cumulative = await s.service.sessionDiff();
     assert.ok(cumulative.includes('中文 文件.ts') || cumulative.includes('new.ts'), 'cumulative diff has both turns');
     const turn2 = await s.service.turnDiff(t2.commit);

@@ -1,0 +1,13 @@
+.pi-vscode-test/**
+test/**
+src/**
+media/chat/*.ts
+node_modules/**
+*.vsix
+shotcut.png
+DESIGN.md
+esbuild.mjs
+tsconfig.json
+.vscode/**
+dist/*.map
+dist/testable.js

@@ -43,6 +43,7 @@ export interface SnapshotResult {
 
 export interface SnapshotArgs {
   reason: 'base' | 'settled' | 'turn' | 'tool' | 'aborted' | 'manual' | 'ipc';
+  /** Pi's 1-based conversation turn. All signals for one turn share this number. */
   turnIndex?: number;
   turnId?: string;
   aborted?: boolean;
@@ -71,7 +72,10 @@ export class SnapshotService {
   private sessionId = '';
   private sessionFile?: string;
   private turnCounter = 0;
-  private lastSettledSignature = '';
+  /** Last commit per turn index, so retries/abort+settle amend instead of appending. */
+  private readonly turnHeads = new Map<number, { commit: string; parent?: string; candidates: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }> }>();
+  /** Whether the current turn has already produced a real commit. */
+  private pendingRebase: { commit: string; parent?: string; candidates: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }> } | undefined;
   private disposed = false;
   private lastHead?: string;
   private baseCommit?: string;
@@ -102,8 +106,18 @@ export class SnapshotService {
   get baseRef(): string { return `${SHADOW_HEAD_PREFIX}${this.sessionKey}/base`; }
 
   bindSession(state: RpcSessionState | undefined, sessionKey?: string): void {
-    if (sessionKey) this.sessionKey = this.safeKey(sessionKey);
-    else if (state?.sessionId) this.sessionKey = this.safeKey(state.sessionId);
+    const nextKey = sessionKey ? this.safeKey(sessionKey) : state?.sessionId ? this.safeKey(state.sessionId) : this.sessionKey;
+    if (nextKey !== this.sessionKey) {
+      // A new session has its own ref chain; never inherit another session's
+      // turn numbering or pending rebase.
+      this.sessionKey = nextKey;
+      this.turnCounter = 0;
+      this.turnHeads.clear();
+      this.pendingRebase = undefined;
+      this.baseCommit = undefined;
+      this.lastHead = undefined;
+      this.turns.delete(this.sessionKey);
+    }
     this.sessionId = state?.sessionId ?? this.sessionId;
     this.sessionFile = state?.sessionFile ?? this.sessionFile;
   }
@@ -115,6 +129,7 @@ export class SnapshotService {
   async initialize(): Promise<void> {
     if (!this.config.get().shadowGit.enabled) return;
     await this.git.ensureRepo();
+    await this.git.migrateLegacyNotes().catch((err) => this.log.warn(`shadow notes migration: ${String(err)}`));
     this.baseCommit = await this.git.readRef(this.baseRef);
     this.lastHead = await this.git.readRef(this.headRef);
     await this.loadTurns();
@@ -167,7 +182,7 @@ export class SnapshotService {
       const { records, skipped, redacted, totalBytes } = await this.materialize([...candidates, ...this.collector.drain()], undefined, cfg.maxTotalBytes);
       const degraded = totalBytes > cfg.maxTotalBytes || cfg.baseMode === 'candidatesOnly';
       const meta = this.makeMeta('base', { turnIndex: 0, turnId: 'base', stats: { workspace: emptyStats(), external: emptyStats() }, skipped, redacted, degradedBase: degraded });
-      const commit = await this.createCommit(undefined, records, meta, 'base');
+      const commit = await this.git.createCommit({ parent: undefined, sessionKey: this.sessionKey, message: 'base', meta, records });
       await this.git.updateRefCas(this.baseRef, commit, undefined);
       await this.git.updateRefCas(this.headRef, commit, undefined);
       this.baseCommit = commit;
@@ -179,55 +194,94 @@ export class SnapshotService {
     });
   }
 
+  /**
+   * ONE commit per conversation turn. Every signal (agent_settled, aborted,
+   * pi-extension IPC, manual) for a turn merges into the SAME commit instead of
+   * appending another one. Turn N+1 begins a new commit whose parent is turn N.
+   */
   async snapshot(args: SnapshotArgs): Promise<SnapshotResult | undefined> {
     if (this.disposed) return undefined;
     const cfg = this.config.get().shadowGit;
     if (!cfg.enabled) return undefined;
     return this.lock().run(async () => {
-      const parent = await this.git.readRef(this.headRef) ?? await this.ensureBaseUnlocked();
-      if (!parent) return undefined;
-      this.turnCounter = args.turnIndex ?? this.turnCounter + 1;
+      const head = await this.git.readRef(this.headRef) ?? await this.ensureBaseUnlocked();
+      if (!head) return undefined;
+      const requestedTurn = args.turnIndex && args.turnIndex > 0 ? args.turnIndex : undefined;
+      // Prefer the turn number from the pi extension (it counts user messages).
+      // Otherwise advance only when the previous turn already committed.
+      let turnIndex = requestedTurn ?? (this.pendingRebase || this.turnHeads.size
+        ? this.turnCounter + 1
+        : Math.max(this.turnCounter, 1));
+      if (!requestedTurn && this.turnHeads.has(turnIndex)) turnIndex = this.turnCounter + 1;
+      const previous = this.turnHeads.get(turnIndex);
+      const isNewTurn = !previous && (!this.pendingRebase || turnIndex !== this.turnCounter);
+      // A late signal for an already-superseded turn must not rewrite history:
+      // its files are already part of a later turn's parent tree.
+      if (!isNewTurn && previous && head !== previous.commit && head !== this.pendingRebase?.commit) {
+        this.log.debug(`snapshot skipped (stale signal for turn ${turnIndex}): ${args.reason}`);
+        return undefined;
+      }
       await this.collector.collectFallback(this.binding);
-      const candidates = this.collector.drain();
+      const fresh = this.collector.drain();
+      const candidates = this.mergeCandidates(previous?.candidates ?? this.pendingRebase?.candidates ?? [], fresh);
+      const parent = isNewTurn ? head : (previous?.parent ?? this.pendingRebase?.parent ?? head);
       const { records, skipped, redacted } = await this.materialize(candidates, parent, cfg.maxTotalBytes);
-      if (!records.length && args.reason !== 'manual') {
-        this.log.debug(`snapshot skipped (no changed files): ${args.reason}`);
+      const root = await this.git.composeTree(parent, records);
+      const parentTree = await this.git.rootTreeOf(parent);
+      const changed = root !== parentTree;
+      if (!changed && args.reason !== 'manual') {
+        // Still remember the turn so a later signal can amend it (e.g. abort
+        // arrives before settle), but never write an empty commit.
+        this.turnCounter = Math.max(this.turnCounter, turnIndex);
+        this.pendingRebase = { commit: parent, parent, candidates };
+        this.log.debug(`snapshot skipped (no file changes in turn ${turnIndex}): ${args.reason}`);
         return undefined;
       }
-      // A successful settled snapshot and an aborted/IPC retry for the same turn
-      // must not create duplicate commits (§6.5 abort handling).
-      const signature = `${args.turnIndex ?? this.turnCounter}:${args.reason === 'aborted' ? 'aborted' : 'settled'}:${records.map((r) => `${r.path}:${r.oid}`).sort().join('|')}`;
-      if (args.reason !== 'tool' && args.reason !== 'turn' && signature === this.lastSettledSignature) {
-        this.log.debug(`snapshot skipped (duplicate ${args.reason} for same turn)`);
-        return undefined;
+      // Stats are computed from the proposed tree BEFORE commit-tree, so the
+      // commit subject/body already contain real file counts (a commit message
+      // cannot be edited afterwards).
+      const preview = await this.git.diffTree(parent, root);
+      const stats = { workspace: emptyStats(), external: emptyStats() };
+      for (const e of preview) {
+        const s = e.path.startsWith('external/') ? stats.external : stats.workspace;
+        s[e.status] = (s[e.status] ?? 0) + 1;
       }
-      this.lastSettledSignature = signature;
       const meta = this.makeMeta(args.reason, {
-        turnIndex: this.turnCounter,
-        turnId: args.turnId ?? this.collector.turnId,
+        turnIndex,
+        turnId: args.turnId ?? `t${turnIndex}`,
         prompt: args.prompt ?? this.collector.currentPrompt,
         model: args.model,
         toolCalls: args.toolCalls ?? this.collector.recentToolCalls,
-        stats: { workspace: emptyStats(), external: emptyStats() },
+        stats,
         skipped,
         redacted,
-        aborted: args.aborted,
+        aborted: args.aborted ?? (previous ? false : undefined),
         subagents: this.collector.activeSubagents,
       });
       const message = this.commitMessage(meta);
-      // CAS update-ref with up to 3 retries; on conflict re-seed the index from
-      // the winning head, rebuild a commit and retry the CAS (§6.7 ④).
-      const candidatesSnapshot = candidates;
+      // CAS: on conflict re-seed from the winning head and retry (§6.7 ④).
       let currentParent = parent;
       for (let attempt = 0; attempt < 3; attempt++) {
-        const seeded = attempt === 0
-          ? records
-          : (await this.materialize(candidatesSnapshot, currentParent, cfg.maxTotalBytes)).records;
-        const commit = await this.createCommit(currentParent, seeded, meta, message);
+        let seeded = records;
+        let currentRoot = root;
+        if (attempt > 0) {
+          seeded = (await this.materialize(candidates, currentParent, cfg.maxTotalBytes)).records;
+          currentRoot = await this.git.composeTree(currentParent, seeded);
+        }
+        const commit = await this.git.commitTree({ parent: currentParent, root: currentRoot, message, meta });
         try {
-          await this.git.updateRefCas(this.headRef, commit, currentParent);
-          await this.git.updateRefCas(`${SHADOW_TURN_PREFIX}${this.sessionKey}/${meta.turnId}`, commit, undefined);
-          return this.finalize(commit, currentParent, meta);
+          const oldHead = this.pendingRebase?.commit && !isNewTurn ? this.pendingRebase.commit : head;
+          await this.git.updateRefCas(this.headRef, commit, oldHead);
+          const turnRef = `${SHADOW_TURN_PREFIX}${this.sessionKey}/t${turnIndex}`;
+          const oldTurn = previous?.commit ?? this.pendingRebase?.commit;
+          if (oldTurn) await this.git.deleteRef(turnRef);
+          await this.git.updateRefCas(turnRef, commit, undefined);
+          // Remove stale in-memory rows for turns whose parent was replaced;
+          // finalize() re-adds only the current turn.
+          this.turns.set(this.sessionKey, (this.turns.get(this.sessionKey) ?? []).filter((t) => t.meta.turnIndex < turnIndex));
+          if (previous) await this.git.deleteNote(previous.commit);
+          else if (this.pendingRebase && this.pendingRebase.commit !== this.pendingRebase.parent) await this.git.deleteNote(this.pendingRebase.commit);
+          return this.finalize(commit, currentParent, meta, turnIndex, candidates);
         } catch (err) {
           const current = await this.git.readRef(this.headRef);
           this.log.warn(`update-ref CAS conflict (attempt ${attempt + 1}): ${String(err)}`);
@@ -238,6 +292,16 @@ export class SnapshotService {
       }
       return undefined;
     });
+  }
+
+  private mergeCandidates(a: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }>, b: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }>): Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }> {
+    const out = new Map<string, { absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }>();
+    for (const c of [...a, ...b]) {
+      const key = c.absPath.toLowerCase();
+      const prev = out.get(key);
+      out.set(key, prev ? { ...prev, explicitWrite: prev.explicitWrite || c.explicitWrite } : { ...c });
+    }
+    return [...out.values()];
   }
 
   private async ensureBaseUnlocked(): Promise<string | undefined> {
@@ -257,7 +321,7 @@ export class SnapshotService {
       turnIndex: 0, turnId: 'base', stats: { workspace: emptyStats(), external: emptyStats() },
       skipped, redacted, degradedBase: totalBytes > cfg.maxTotalBytes || cfg.baseMode === 'candidatesOnly',
     });
-    const commit = await this.createCommit(undefined, records, meta, 'base');
+    const commit = await this.git.createCommit({ parent: undefined, sessionKey: this.sessionKey, message: 'base', meta, records });
     await this.git.updateRefCas(this.baseRef, commit, undefined);
     await this.git.updateRefCas(this.headRef, commit, undefined);
     this.baseCommit = commit;
@@ -265,16 +329,22 @@ export class SnapshotService {
     return commit;
   }
 
-  private async finalize(commit: string, parent: string | undefined, meta: ShadowMeta): Promise<SnapshotResult> {
+  private async finalize(commit: string, parent: string | undefined, meta: ShadowMeta, turnIndex: number, candidates: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }>): Promise<SnapshotResult> {
     this.lastHead = commit;
     const changes = await this.changesFor(commit, parent, meta);
     meta.stats.workspace = this.statFor(changes, 'workspace');
     meta.stats.external = this.statFor(changes, 'external');
     try { await this.git.addNote(commit, meta); } catch (err) { this.log.warn(`rewrite note: ${String(err)}`); }
     const record: TurnRecord = { sessionKey: this.sessionKey, commit, parent, meta, changes };
-    const list = this.turns.get(this.sessionKey) ?? [];
+    const list = (this.turns.get(this.sessionKey) ?? []).filter((t) => t.meta.turnIndex !== turnIndex);
     list.unshift(record);
+    list.sort((a, b) => b.meta.turnIndex - a.meta.turnIndex);
     this.turns.set(this.sessionKey, list);
+    this.turnCounter = Math.max(this.turnCounter, turnIndex);
+    this.turnHeads.set(turnIndex, { commit, parent, candidates });
+    // Later turns can no longer be amended: their parent has been replaced.
+    for (const key of [...this.turnHeads.keys()]) if (key > turnIndex) this.turnHeads.delete(key);
+    this.pendingRebase = undefined;
     await this.writeIpcReply(meta, commit);
     this.log.info(`shadow snapshot ${commit.slice(0, 8)} turn ${meta.turnIndex} (${changes.length} change(s))`);
     this.signal.fire(this.sessionKey);
@@ -287,19 +357,19 @@ export class SnapshotService {
     return stats;
   }
 
-  private async createCommit(parent: string | undefined, records: Array<{ mode: string; oid: string; path: string; remove?: boolean }>, meta: ShadowMeta, message: string): Promise<string> {
-    return this.git.createCommit({ parent, sessionKey: this.sessionKey, message, meta, records });
-  }
-
   private commitMessage(meta: ShadowMeta): string {
     if (meta.reason === 'base') return `base · session ${this.sessionId.slice(0, 8)} · ${meta.createdAt}`;
     const w = meta.stats.workspace;
     const e = meta.stats.external;
     const fmt = (s: Stats) => `+${s.A} -${s.D} ~${s.M}`;
-    return `turn ${meta.turnIndex} · session ${this.sessionId.slice(0, 8)} · ${meta.createdAt}\n\n` +
-      `prompt: ${(meta.prompt ?? '').slice(0, 160).replace(/\n/g, ' ')}\n` +
+    // Subject = the user's question for this turn. That makes `git log` read as
+    // a conversation history, one line per round (§6.6).
+    const question = (meta.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 120) || meta.reason;
+    return `第 ${meta.turnIndex} 轮 · ${question}\n\n` +
+      `session: ${this.sessionId}\n` +
+      `at: ${meta.createdAt}\n` +
       `tools: ${(meta.toolCalls ?? []).join(', ') || '-'}\n` +
-      `files: ${fmt(w)} (workspace) / ${fmt(e)} (external)`;
+      `files: ${fmt(w)} (workspace) / ${fmt(e)} (external)${meta.aborted ? '\naborted: true' : ''}`;
   }
 
   private makeMeta(reason: string, extra: Partial<ShadowMeta>): ShadowMeta {
@@ -434,7 +504,7 @@ export class SnapshotService {
     const head = await this.git.readRef(this.headRef);
     if (!head) return;
     this.lastHead = head;
-    const rows = await this.git.log(head, 200);
+    const rows = await this.git.commitLog(head, 200);
     const list: TurnRecord[] = [];
     for (const row of rows) {
       const meta = await this.git.getNote(row.commit);
@@ -450,6 +520,9 @@ export class SnapshotService {
     }
     this.turns.set(this.sessionKey, list);
     this.turnCounter = list[0]?.meta.turnIndex ?? 0;
+    this.turnHeads.clear();
+    for (const t of list) this.turnHeads.set(t.meta.turnIndex, { commit: t.commit, parent: t.parent, candidates: [] });
+    this.pendingRebase = undefined;
     this.signal.fire(this.sessionKey);
   }
 
@@ -472,6 +545,12 @@ export class SnapshotService {
     return head ? this.git.diffText(this.baseCommit, head) : '';
   }
 
+  /** Reverse patch draft (head → base). Read-only: never writes the workspace. */
+  async reverseSessionDiff(): Promise<string> {
+    const head = await this.git.readRef(this.headRef);
+    return head && this.baseCommit ? this.git.diffText(head, this.baseCommit) : '';
+  }
+
   async turnDiff(commit: string): Promise<string> {
     const turns = this.getTurns();
     const t = turns.find((x) => x.commit === commit);
@@ -483,6 +562,10 @@ export class SnapshotService {
   }
 
   async clearSessionData(): Promise<void> {
+    const head = await this.git.readRef(this.headRef);
+    if (head) for (const row of await this.git.commitLog(head, 500)) await this.git.deleteNote(row.commit);
+    const base = await this.git.readRef(this.baseRef);
+    if (base) await this.git.deleteNote(base);
     await this.git.deleteRef(this.headRef);
     await this.git.deleteRef(this.baseRef);
     for (const r of await this.git.listRefs(`${SHADOW_TURN_PREFIX}${this.sessionKey}/`)) await this.git.deleteRef(r.ref);
@@ -490,6 +573,7 @@ export class SnapshotService {
     this.baseCommit = undefined;
     this.lastHead = undefined;
     this.turnCounter = 0;
+    this.turnHeads.clear();
     this.signal.fire(this.sessionKey);
   }
 
@@ -504,11 +588,14 @@ export class SnapshotService {
     return out;
   }
 
+  /** The pi extension also asks for `t<turn>.reply`; provide both spellings. */
   private async writeIpcReply(meta: ShadowMeta, commit: string): Promise<void> {
     try {
       await fs.mkdir(this.ipcDir, { recursive: true });
-      const reply = path.join(this.ipcDir, `${meta.turnId}.reply`);
-      await fs.writeFile(reply, JSON.stringify({ commit, sessionId: meta.sessionId, turn: meta.turnIndex, at: meta.createdAt }), 'utf8');
+      const body = JSON.stringify({ commit, sessionId: meta.sessionId, turn: meta.turnIndex, at: meta.createdAt });
+      for (const name of [`${meta.turnId}.reply`, `t${meta.turnIndex}.reply`]) {
+        await fs.writeFile(path.join(this.ipcDir, name), body, 'utf8');
+      }
     } catch (err) { this.log.debug(`ipc reply: ${String(err)}`); }
   }
 
@@ -517,7 +604,7 @@ export class SnapshotService {
     const refs = await this.git.listRefs(SHADOW_HEAD_PREFIX);
     let turns = 0, changes = 0, external = 0, cost = 0;
     for (const r of refs) {
-      const rows = await this.git.log(r.oid, 500);
+      const rows = await this.git.commitLog(r.oid, 500);
       for (const row of rows) {
         const meta = await this.git.getNote(row.commit);
         if (!meta || meta.reason === 'base') continue;

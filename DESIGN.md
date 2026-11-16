@@ -327,7 +327,7 @@ TUI → 原生：TUI 退出后 RPC 发 switch_session(sessionFile)，重放 get_
 
 - 两者读写同一份 JSONL；插件在切换前提示「另一侧可能有未结束的运行」。
 - TUI 模式下 `pi.shadowGit.enabled` 仍可工作（快照逻辑在 pi 扩展里，与宿主 UI 无关）。
-- 设置 `pi.enableTui: false` 可完全隐藏入口（企业/受限环境）。
+- 设置 `pi.enableTui: false` 时菜单、命令面板、斜杠命令、会话树入口一起隐藏；若用户仍通过旧入口触发，弹窗提供「启用并打开 / 打开设置 / 取消」，不再只报一句被关闭。TUI 使用 bundle 自己的 `PI_VSCODE_IPC_DIR` 与 session id，保证影子扩展在终端通道同样生效。
 
 ---
 
@@ -437,7 +437,7 @@ TUI → 原生：TUI 退出后 RPC 发 switch_session(sessionFile)，重放 get_
 | **L2 pi 扩展层（增强，可选）** | 用户显式加载 `-e shadow-snapshot.ts` | `tool_call` / `tool_result` 钩子能拿到**执行前路径集合**、能阻止危险路径、能 `pi.appendEntry()` 把快照 commit 写进 Pi 会话 | 最高，且 TUI 通道同样生效 |
 | **L3 兜底层** | `agent_settled` / `turn_end` / 定时 | 对「候选路径集合」做 `stat + hash`；候选来自 L1 路径、会话里出现过的路径、`git status --porcelain`、编辑器已打开文档 | 能补上 `bash: echo x > f` 这类隐式写入，但**不保证捕获任意 shell 副作用** |
 
-**必须写进文档的诚实边界**：L3 只能覆盖「已知候选路径」，不可能全量扫描整个磁盘；任意 `bash` 脚本在别处创建的文件若从未被提及，v1 不保证记录。设置 `pi.shadowGit.snapshotMode` 提供 `settled / turn / tool / hybrid` 让用户按性能取舍，默认 `hybrid`（每次工具结束记候选，`agent_settled` 统一落一次快照）。
+**必须写进文档的诚实边界**：L3 只能覆盖「已知候选路径」，不可能全量扫描整个磁盘；任意 `bash` 脚本在别处创建的文件若从未被提及，v1 不保证记录。**0.2.1 起固定「一轮对话一次提交」**：工具结束 / `turn_end`（Pi 内部 LLM 轮）只累积候选路径，`agent_settled` 统一落一次快照；同一轮的 abort / IPC / settle 信号改写同一个 commit，绝不追加。`pi.shadowGit.snapshotMode` 保留兼容但不再影响行为。
 
 **推荐把 L2 做成随插件分发的 Pi 扩展**，理由：
 - RPC 与 TUI 两条通道都能用（扩展跑在 pi 进程内）；
@@ -508,14 +508,18 @@ snapshot(sessionKey, turnId, reason):
 **每轮一次提交**，`commit message` 格式：
 
 ```
-turn 3 · session <short-id> · 2026-11-12T09:14:38Z
+第 3 轮 · 修复登录页的空指针
 
 prompt: 修复登录页的空指针
 tools: edit×2, bash×1
+
+session: <short-id>
+at: 2026-11-12T09:14:38Z
+tools: edit, edit, bash
 files: +2 -1 ~3 (workspace) / +1 (external)
 ```
 
-元数据放 `git notes --ref=pi/meta`（实测可用），JSON：
+元数据放 **`refs/pi/meta/<commit>` 的 blob ref**（不是 `git notes`：notes 每次写入都会生成一个 "Notes added by..." commit，污染 `git log --all`）。旧仓库首次打开时自动迁移并删除 `refs/notes/pi/meta`。JSON：
 
 ```json
 {

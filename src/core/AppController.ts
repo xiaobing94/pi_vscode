@@ -21,6 +21,8 @@ import { ShadowDocProvider } from '../changes/ShadowDocProvider';
 import { SendCommands } from '../editor/SendCommands';
 import { McpPanel } from '../editor/McpPanel';
 import { DiagnosticsPanel } from '../core/Diagnostics';
+import { EditTracker } from '../changes/EditTracker';
+import { PiChatParticipant } from '../views/PiChatParticipant';
 
 export interface ControllerDeps {
   context: vscode.ExtensionContext;
@@ -55,6 +57,7 @@ export class AppController {  // async dispose; see dispose() below
       binding: () => this.active()?.binding, runtime: () => resolver.forTui(),
       onSwitch: (p) => this.switchSession(p),
       onTui: () => this.active()?.tui.open(this.active()!.binding.folder.uri.fsPath) ?? Promise.resolve(),
+      onScan: (count) => chat.setHistoryCount(count),
       extensionContext: context,
     });
     this.changeTree = new ChangeTree({ snapshots: () => this.active()?.snapshots });
@@ -72,7 +75,15 @@ export class AppController {  // async dispose; see dispose() below
       vscode.window.registerTreeDataProvider('pi.changes', this.changeTree),
       vscode.window.registerTreeDataProvider('pi.agents', McpPanel.agentTreeDataProvider(() => this.active()?.collector.activeSubagents ?? [])),
       vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chat, { webviewOptions: { retainContextWhenHidden: true } }),
+      vscode.window.registerWebviewViewProvider(ChatViewProvider.secondaryViewType, chat, { webviewOptions: { retainContextWhenHidden: true } }),
       this.docProvider,
+      vscode.workspace.registerTextDocumentContentProvider(EditTracker.scheme, { provideTextDocumentContent: (uri) => EditTracker.provideContent(uri) }),
+      new PiChatParticipant({
+        extensionUri: context.extensionUri, log,
+        gateway: () => this.active()?.gateway,
+        edits: () => this.active()?.edits,
+        send: (text, images) => this.send(text, images as any),
+      }).register(),
       ...this.diff.register(),
       this.diff.bindActiveEditorContext(),
       this.overview,
@@ -83,6 +94,9 @@ export class AppController {  // async dispose; see dispose() below
   async activate(): Promise<void> {
     const { context, config, log, registry, resolver, chat, statusBar, diagnostics } = this.deps;
     await this.rebuild();
+    // The tree view is created lazily by VS Code; seed it without waiting for
+    // the first agent event so history is visible on first expansion.
+    void this.sessionTree.refresh(this.active()?.gateway.getState().state);
     this.disposables.push(registry.onDidChange(() => void this.rebuild()));
 
     const cmd = (name: string, fn: (...args: any[]) => unknown) => vscode.commands.registerCommand(name, fn);
@@ -94,6 +108,28 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.chat.focus', async () => {
         await vscode.commands.executeCommand('workbench.view.extension.pi-vscode');
         await vscode.commands.executeCommand('pi.chat.focusView');
+      }),
+      cmd('pi.chat.focusSecondary', async () => {
+        // Reveal the right-hand auxiliary bar container (same place as Codex / Claude Code).
+        await vscode.commands.executeCommand('workbench.view.extension.pi-vscode-secondary');
+        await vscode.commands.executeCommand('pi.chatSecondary.focus');
+        await vscode.commands.executeCommand('pi.chat.focusSecondaryView');
+      }),
+      cmd('pi.chat.askInNativeChat', async () => {
+        // Pre-fill @pi in VS Code's built-in Chat view. That view only accepts input
+        // when an extension contributes a default chat agent (Copilot Chat / ChatGPT).
+        // Without one it stays on the welcome page, so use the right-hand Pi view instead.
+        // Only Copilot Chat contributes a default chat agent; a chat session
+        // provider (e.g. ChatGPT/Codex) still leaves the built-in Chat on its
+        // welcome page, so it cannot host @pi.
+        const hasChatHost = !!vscode.extensions.getExtension('GitHub.copilot-chat');
+        if (hasChatHost) {
+          try {
+            await vscode.commands.executeCommand('workbench.action.chat.open', { query: '@pi ', isPartialQuery: true });
+            return;
+          } catch { /* fall through to the Pi view */ }
+        }
+        await vscode.commands.executeCommand('pi.chat.focusSecondary');
       }),
       cmd('pi.showDiagnostics', () => diagnostics.show()),
       cmd('pi.switchActiveSession', async () => {
@@ -178,6 +214,32 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.sendGitDiff', () => this.sendCommands()?.sendGitDiff(false)),
       cmd('pi.sendStagedDiff', () => this.sendCommands()?.sendGitDiff(true)),
       cmd('pi.compact', () => gw()?.send({ type: 'compact' })),
+      cmd('pi.openTurnEditDiff', async (turnId?: string) => {
+        const ok = await this.active()?.edits.openTurnDiff(typeof turnId === 'string' ? turnId : undefined);
+        if (!ok) void vscode.window.showInformationMessage('Pi: 最近一轮没有文件改动。');
+      }),
+      cmd('pi.openSessionEditDiff', async () => {
+        const ok = await this.active()?.edits.openSessionDiff();
+        if (!ok) await vscode.commands.executeCommand('pi.openSessionDiff');
+      }),
+      cmd('pi.undoAllChanges', async () => {
+        const svc = this.active()?.snapshots;
+        const patch = svc ? await svc.reverseSessionDiff() : '';
+        const text = `# Pi 反向补丁草稿（只读，不会自动应用）\n# 把本会话累计改动反向应用，可自行检查后执行：git apply <此补丁>\n# 影子快照不会写回工作区，也不会回滚用户 Git 仓库。\n\n${patch || '（本会话没有可用的影子快照）'}`;
+        const doc = await vscode.workspace.openTextDocument({ language: 'diff', content: text });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      }),
+      cmd('pi.pickTurnDiff', async () => {
+        const tracker = this.active()?.edits;
+        const turns = tracker?.allTurns() ?? [];
+        if (!tracker || !turns.length) { void vscode.window.showInformationMessage('Pi: 本会话还没有文件改动。'); return; }
+        const pick = await vscode.window.showQuickPick([
+          { label: '$(git-compare) 本会话全部改动', id: '' },
+          ...turns.map((t) => { const s = tracker.summary(t); return { label: `$(diff) 第 ${t.index} 轮 · ${s.files.length} 个文件 · +${s.added} -${s.removed}`, description: t.prompt.slice(0, 60), detail: s.files.map((f) => f.display).join(', '), id: t.id }; }),
+        ], { title: 'Pi: 查看对话改动（原生差异）', matchOnDetail: true });
+        if (!pick) return;
+        if (pick.id) await tracker.openTurnDiff(pick.id); else await tracker.openSessionDiff();
+      }),
       cmd('pi.abort', () => gw()?.send({ type: 'abort' })),
       cmd('pi.clearQueue', async () => {
         const data = await gw()?.send<{ steering: string[]; followUp: string[] }>({ type: 'clear_queue' });
@@ -306,10 +368,11 @@ export class AppController {  // async dispose; see dispose() below
       if (b && b.repoKey !== this.activeKey) this.setActive(b.repoKey);
     }));
 
-    // Internal alias: reveal the view container and ask the webview to take focus.
-    this.disposables.push(vscode.commands.registerCommand('pi.chat.focusView', () => {
-      this.deps.chat.focus();
-    }));
+    // Internal aliases: reveal the view container and focus only that view's composer.
+    this.disposables.push(
+      vscode.commands.registerCommand('pi.chat.focusView', () => this.deps.chat.focus(ChatViewProvider.viewType)),
+      vscode.commands.registerCommand('pi.chat.focusSecondaryView', () => this.deps.chat.focus(ChatViewProvider.secondaryViewType)),
+    );
     void chat;
   }
 
@@ -356,8 +419,10 @@ export class AppController {  // async dispose; see dispose() below
     });
     const bundle: Bundle = {
       key, binding: base.binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir,
+      edits: new EditTracker({ cwd: base.binding.folder.uri.fsPath, ipcDir: prepared.dir, log }),
       tui: new TuiLauncher({
         config, log, resolver, gateway: () => gateway,
+        ipcDir: prepared.dir, ipcSessionId: () => snapshots.currentSessionId || key,
         onReturn: async () => { void chat.replay(await gateway.getMessages().catch(() => [])); },
       }),
     };
@@ -394,13 +459,14 @@ export class AppController {  // async dispose; see dispose() below
         ipcEnv: prepared.env,
         sessionId: undefined,
       });
-      const bundle: Bundle = { key: binding.repoKey, binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir, tui: undefined as any };
+      const bundle: Bundle = { key: binding.repoKey, binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir, tui: undefined as any, edits: new EditTracker({ cwd: binding.folder.uri.fsPath, ipcDir: prepared.dir, log }) };
       bundle.tui = new TuiLauncher({
         config, log, resolver, gateway: () => this.active()?.gateway,
+        ipcDir: prepared.dir, ipcSessionId: () => snapshots.currentSessionId || binding.repoKey,
         onReturn: async () => {
           const state = await gateway.refreshState();
           if (state?.sessionFile) void gateway.send({ type: 'switch_session', sessionPath: state.sessionFile }).catch(() => {});
-          void chat.replay(await gateway.getMessages().catch(() => []));
+          await this.onSessionChanged();
           await snapshots.initialize();
         },
       });
@@ -425,21 +491,37 @@ export class AppController {  // async dispose; see dispose() below
 
   private subscribe(bundle: Bundle): void {
     const { chat, statusBar, diagnostics, config, log } = this.deps;
+    this.disposables.push(
+      bundle.edits,
+      bundle.edits.onDidRecordTool((t) => { if (this.active() === bundle) chat.onToolRecorded(t.toolCallId); }),
+      bundle.edits.onDidSettleTurn((s) => { if (this.active() === bundle) chat.onTurnSettled(s); }),
+    );
+    if (this.active() === bundle) chat.bindEdits(bundle.edits);
     this.disposables.push(bundle.gateway.onEvent((event) => {
-      chat.onEvent(event);
+      bundle.edits.onEvent(event);
+      if (this.active() === bundle) chat.onEvent(event);
       bundle.collector.onEvent(event);
       bundle.snapshots.onEvent(event);
       switch (event.type) {
         case 'agent_settled': {
-          const mode = config.get().shadowGit.snapshotMode;
           void (async () => {
-            await bundle.snapshots.snapshot({
+            // Exactly one snapshot per finished round; all other modes feed
+            // candidates into this same turn (never commit per tool/file).
+            const snap = await bundle.snapshots.snapshot({
               reason: event.aborted ? 'aborted' : 'settled',
               aborted: !!event.aborted,
+              turnIndex: bundle.collector.turnNumber || undefined,
               prompt: bundle.collector.currentPrompt,
               model: bundle.gateway.getState().state?.model?.id,
               toolCalls: bundle.collector.recentToolCalls,
-            });
+            }).catch((err) => { log.error('settled snapshot failed', err); return undefined; });
+            // Merge shadow-git changes (bash / other writers) into the per-turn diff list.
+            const shadow = (snap?.changes ?? []).filter((c) => c.scope === 'workspace').map((c) => ({
+              absPath: c.absPath, displayPath: c.displayPath, status: c.status,
+              left: ShadowDocProvider.uri(bundle.snapshots.currentSessionKey, c.parent, c.path, 'old', c.status === 'A'),
+              right: ShadowDocProvider.uri(bundle.snapshots.currentSessionKey, c.commit, c.path, 'new', c.status === 'D'),
+            }));
+            await bundle.edits.settle(!!event.aborted, shadow);
             const stats = await bundle.gateway.refreshStats();
             const state = await bundle.gateway.refreshState();
             chat.setStateInfo(state, stats as any);
@@ -448,16 +530,11 @@ export class AppController {  // async dispose; see dispose() below
           })().catch((err) => log.error('settled snapshot failed', err));
           break;
         }
-        case 'turn_end': {
-          if (config.get().shadowGit.snapshotMode === 'turn') {
-            void bundle.snapshots.snapshot({ reason: 'turn', toolCalls: bundle.collector.recentToolCalls }).catch((err) => log.error('turn snapshot failed', err));
-          }
-          break;
-        }
+        case 'turn_end':
         case 'tool_execution_end': {
-          if (config.get().shadowGit.snapshotMode === 'tool') {
-            void bundle.snapshots.snapshot({ reason: 'tool', toolCalls: bundle.collector.recentToolCalls }).catch((err) => log.error('tool snapshot failed', err));
-          }
+          // Candidate paths are collected by Collector.onEvent; no commit here.
+          // Pi's `turn_end` is an internal LLM round (there can be many per user
+          // question), so it must NOT create a shadow commit.
           break;
         }
         case 'session_info_changed':
@@ -485,17 +562,15 @@ export class AppController {  // async dispose; see dispose() below
       this.changeTree.refresh();
       this.overview.update();
     }));
-    // L2: the pi extension asks for a snapshot before it appends its custom entry.
-    // Only the aborted path is host-driven here; normal settles already produce a
-    // snapshot from `agent_settled`, which avoids duplicate commits for one turn.
+    // L2: the pi extension reports the exact user-turn number over the sidecar.
+    // Normal settles may arrive before/after this signal; SnapshotService merges
+    // them into ONE commit per turn (re-writes the same turn commit instead of
+    // appending a second one).
     this.disposables.push(bundle.collector.onSnapshotRequest.event((req) => {
-      const mode = config.get().shadowGit.snapshotMode;
-      if (req.reason !== 'aborted' || (mode !== 'hybrid' && mode !== 'settled')) return;
       void bundle.snapshots.snapshot({
-        reason: req.reason === 'aborted' ? 'aborted' : 'ipc',
+        reason: req.reason === 'aborted' ? 'aborted' : 'settled',
         aborted: req.reason === 'aborted',
-        turnIndex: Number(req.turn) || undefined,
-        turnId: `t${req.turn || Date.now()}`,
+        turnIndex: Number(req.turn) || bundle.collector.turnNumber || undefined,
         prompt: req.prompt ?? bundle.collector.currentPrompt,
         model: bundle.gateway.getState().state?.model?.id,
         toolCalls: bundle.collector.recentToolCalls,
@@ -507,33 +582,75 @@ export class AppController {  // async dispose; see dispose() below
     this.activeKey = key;
     const b = this.bindings.get(key);
     if (!b) return;
+    this.deps.chat.bindEdits(b.edits);
     const state = await b.gateway.refreshState();
     this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any);
-    void this.deps.chat.replay(await b.gateway.getMessages().catch(() => []));
     this.changeTree.refresh();
     this.overview.update();
-    this.sessionTree.refresh(state);
+    void this.sessionTree.refresh(state);
     this.deps.statusBar.refresh();
+    return this.replayChat(b);
   }
 
   private async onSessionChanged(): Promise<void> {
     const b = this.active();
     if (!b) return;
     const state = await b.gateway.refreshState();
+    b.edits.reset();
+    this.deps.chat.bindEdits(b.edits);
+    this.deps.chat.postSessionDiffVisible(false);
     b.snapshots.bindSession(state, state?.sessionId);
     await b.snapshots.initialize();
     await b.snapshots.ensureBase();
+    this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any);
+    await this.sessionTree.refreshDisk();          // rescan so the new session is marked 当前会话
     await this.sessionTree.refresh(state);
     this.deps.statusBar.refresh();
+    this.changeTree.refresh();
+    this.overview.update();
+    return this.replayChat(b);
   }
 
+  private async replayChat(b: Bundle): Promise<void> {
+    try {
+      await this.deps.chat.replay(await b.gateway.getMessages());
+    } catch (err) {
+      this.deps.log.error('replay messages after session switch failed', err);
+      void vscode.window.showWarningMessage(`Pi: 会话已切换，但消息回放失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Pi CLI 1.5.2 happily `switch_session`s to a path that does not exist and
+   * creates a brand-new empty session (success: true). Guard against that: a
+   * stale entry in the recent list must never wipe the visible chat.
+   */
+  private switchChain: Promise<void> = Promise.resolve();
   private async switchSession(sessionPath: string): Promise<void> {
-    const b = this.active();
-    if (!b) return;
-    const data = await b.gateway.send<{ cancelled: boolean }>({ type: 'switch_session', sessionPath });
-    if (data?.cancelled) return;
-    await this.onSessionChanged();
-    void this.deps.chat.replay(await b.gateway.getMessages().catch(() => []));
+    const run = async (): Promise<void> => {
+      const b = this.active();
+      if (!b) return;
+      const target = sessionPath.trim();
+      if (!target) return;
+      try {
+        await vscode.workspace.fs.stat(vscode.Uri.file(target));
+      } catch {
+        void vscode.window.showWarningMessage(`Pi: 会话文件已不存在，无法恢复：${target}`);
+        await this.sessionTree.refresh(b.gateway.getState().state);
+        return;
+      }
+      try {
+        const data = await b.gateway.send<{ cancelled: boolean }>({ type: 'switch_session', sessionPath: target });
+        if (data?.cancelled) return;
+        await this.onSessionChanged();
+      } catch (err) {
+        this.deps.log.error('switch_session failed', err);
+        void vscode.window.showErrorMessage(`Pi: 切换会话失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    // Serialise: two rapid clicks must not interleave RPC rebind + replay.
+    this.switchChain = this.switchChain.then(run, run);
+    return this.switchChain;
   }
 
   private sendCommands(): SendCommands | undefined {
@@ -559,7 +676,8 @@ export class AppController {  // async dispose; see dispose() below
     if (!b) throw new Error('没有可用的 Pi 工作区');
     if (text.startsWith('/') && await this.runLocalSlash(text)) return;
     const type = behavior === 'followUp' ? 'follow_up' : behavior === 'steer' && b.gateway.getState().state?.isStreaming ? 'steer' : 'prompt';
-    await b.gateway.send({ type, message: text, images: images as any, ...(type === 'prompt' ? { streamingBehavior: behavior ?? 'steer' } : {}) } as any);
+    const imgs = images?.length ? images.map((i: any) => ({ type: 'image', data: i.data, mimeType: i.mimeType })) : undefined;
+    await b.gateway.send({ type, message: text, images: imgs as any, ...(type === 'prompt' ? { streamingBehavior: behavior ?? 'steer' } : {}) } as any);
   }
 
   /** Built-in slash commands that must not be sent to the model as plain text. */
@@ -568,13 +686,17 @@ export class AppController {  // async dispose; see dispose() below
     const name = rawName.toLowerCase();
     const builtins: Record<string, string> = {
       '/model': 'pi.selectModel', '/thinking': 'pi.selectThinkingLevel',
-      '/new': 'pi.newSession', '/resume': 'pi.resumeSession', '/tui': 'pi.openTui',
+      '/new': 'pi.newSession', '/resume': 'pi.resumeSession',
+      '/tui': this.deps.config.get().enableTui ? 'pi.openTui' : '',
       '/abort': 'pi.abort', '/compact': 'pi.compact', '/copy': 'pi.openSessionDiff',
-      '/export': 'pi.exportHtml', '/status': 'pi.showStatus', '/diff': 'pi.openChangesOverview',
+      '/export': 'pi.exportHtml', '/status': 'pi.showStatus', '/diff': 'pi.pickTurnDiff',
       '/bug': 'pi.bugReportWizard', '/share': 'pi.sharePreview',
     };
     const command = builtins[name];
-    if (!command) return false;
+    if (!command) {
+      if (name === '/tui') void vscode.window.showInformationMessage('Pi: TUI 入口已在设置中关闭（pi.enableTui）。可启用后使用 /tui。');
+      return name === '/tui';
+    }
     await vscode.commands.executeCommand(command, ...(args.length ? [args.join(' ')] : []));
     return true;
   }
@@ -582,6 +704,7 @@ export class AppController {  // async dispose; see dispose() below
   gatewayProvider(): RpcGateway | undefined { return this.active()?.gateway; }
   snapshotsProvider(): SnapshotService | undefined { return this.active()?.snapshots; }
   collectorProvider(): Collector | undefined { return this.active()?.collector; }
+  editsProvider(): EditTracker | undefined { return this.active()?.edits; }
   diffForPath(p: string): void { void this.diff.openFileHistoryDiff(vscode.Uri.file(p)); }
 
   async dispose(): Promise<void> {
@@ -596,6 +719,7 @@ export class AppController {  // async dispose; see dispose() below
 
 interface Bundle {
   key: string;
+  edits: EditTracker;
   binding: WorkspaceBinding;
   gateway: RpcGateway;
   collector: Collector;

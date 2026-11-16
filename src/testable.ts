@@ -9,4 +9,6 @@ export { Collector } from './changes/Collector';
 export { SnapshotService } from './changes/SnapshotService';
 export { ShadowDocProvider } from './changes/ShadowDocProvider';
 export { Resolver } from './pi/Resolver';
+export { discoverSessions, readSessionInfo, normalizeCwd, preview } from './session/SessionDiscovery';
 export { RpcGateway } from './pi/RpcGateway';
+export { EditTracker, reversePatch, countLines, countPatch } from './changes/EditTracker';

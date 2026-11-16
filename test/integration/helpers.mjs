@@ -41,7 +41,13 @@ export function makeVscodeMock() {
     getConfiguration: () => ({ get: () => undefined, update: async () => {} }),
     getWorkspaceFolder: () => undefined,
     createFileSystemWatcher: () => ({ onDidChange: () => new Disposable(), onDidCreate: () => new Disposable(), dispose() {} }),
-    fs: { createDirectory: async (uri) => mkdir(uri.fsPath, { recursive: true }) },
+    fs: {
+      createDirectory: async (uri) => mkdir(uri.fsPath, { recursive: true }),
+      stat: async (uri) => {
+        const { stat: fsStat } = await import('node:fs/promises');
+        return fsStat(uri.fsPath);
+      },
+    },
     registerTextDocumentContentProvider: () => new Disposable(),
     openTextDocument: async () => ({ getText: () => '' }),
     findFiles: async () => [],
@@ -70,6 +76,7 @@ export function makeVscodeMock() {
     workspace,
     window,
     commands: { registerCommand: () => new Disposable(), executeCommand: async () => undefined },
+    extensions: { getExtension: () => undefined },
     languages: { getDiagnostics: () => [] },
     env: { clipboard: { writeText: async () => {} }, openExternal: async () => true },
     ThemeIcon: class { constructor(id) { this.id = id; } },
