@@ -3,7 +3,7 @@
   "displayName": "Pi for VS Code",
   "description": "在 VS Code 原生侧栏里使用 Pi coding agent，并用独立的影子 Git 仓库记录每次对话带来的文件改动。",
   "version": "0.2.0",
-  "publisher": "pi-vscode",
+  "publisher": "xiaobing94",
   "license": "MIT",
   "engines": {
     "vscode": "^1.96.0",
@@ -23,10 +23,18 @@
     "shadow git",
     "diff"
   ],
+  "icon": "media/pi.png",
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "未授信工作区不启动任何 Pi 进程"
+    },
+    "virtualWorkspaces": false
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",

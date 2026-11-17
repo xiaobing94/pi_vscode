@@ -1,104 +1,264 @@
 # Pi for VS Code
 
-在 VS Code 原生侧栏里使用 [Pi](https://pi.dev) coding agent，并用独立的**影子 Git 仓库**记录每次对话带来的文件改动。
+**在 VS Code 原生侧栏里使用 [Pi](https://pi.dev) coding agent，并用独立的影子 Git 仓库逐轮记录 AI 造成的文件改动。**
 
-> 当前状态：**已按 [DESIGN.md](DESIGN.md) 实现 P0 + P1 + P2 全量功能**（含可选/实验性的 P2 能力）。设计文档的方案、命令规范与验收标准均保持不变；本文是实现说明与运行指南。
+> Use the [Pi](https://pi.dev) coding agent inside a native VS Code sidebar — and keep every file change it makes in a per-turn **shadow Git** history, without ever touching your own `.git`.
+
+扩展把 Pi CLI 以 `--mode rpc` 子进程方式接入 VS Code：聊天视图是原生 webview（可选中、Ctrl+C/Ctrl+F、代码块复制、`path:line` 跳转），改动记录落在插件自有的裸仓库里，可随时按「轮次」回看 diff。
+
+---
+
+## 为什么用它
+
+| | |
+|---|---|
+| **AI 改动全程留痕** | 影子 Git 仓库按「一轮对话一次提交」记录 AI 带来的每一个文件改动，`Ctrl+Alt+D` 一键看本轮 / 本次会话 diff，不用 `git stash` 也不会污染你的工作分支 |
+| **原生 VS Code 体验** | 活动栏 + 右侧辅助栏两个入口（共用同一份 Pi 会话）、状态栏用量、树视图、原生 QuickPick diff、编辑器标题栏「查看历次差异」 |
+| **会话可追溯可导出** | 磁盘会话历史浏览、按消息 fork / clone、导出 HTML、`/share` 预览、跨会话成本统计 |
+| **工程外改动单独归类** | AI 写到工程目录之外的文件全部进 `external/` 独立分组，UI 显著警示，绝不静默 |
+| **只读、不越权** | 不自动改工作区、不自动 commit、不自动回滚；未授信工作区不启动任何进程；疑似密钥文件只记哈希不存原文 |
+
+---
+
+## 环境要求
+
+| 依赖 | 版本 | 说明 |
+|---|---|---|
+| VS Code | ≥ **1.96** | 需要 `secondarySidebar`（右侧辅助栏）容器 |
+| Pi CLI | ≥ **1.5.2** | 见下方 [安装 Pi](#安装-pi) |
+| Node.js | ≥ **22.19** | 运行 Pi 子进程（不要是 `Code.exe`；扩展会自动探测 `node.exe`） |
+| Git | ≥ **2.40** | 影子仓库用 `hash-object` / `mktree` / `commit-tree` 等 plumbing 命令 |
+
+实测环境：VS Code 1.108.2 · Pi 1.5.2 · Node v24.14 · Git 2.52。**Windows 10/11 优先**，同时兼容 macOS / Linux / WSL / Remote-SSH。
+
+### 安装 Pi
+
+```bash
+# Windows
+powershell -c "irm https://pi.dev/install.ps1 | iex"
+# macOS / Linux
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+安装脚本会装到 `~/.pi/agent/`（本扩展会自动探测该托管安装）。也可用 npm 全局安装：
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
+
+自检：
+
+```bash
+pi --version      # ≥ 1.5.2
+node --version    # ≥ v22.19.0
+git --version     # ≥ 2.40
+```
+
+---
+
+## 安装
+
+**从 Marketplace 安装**：扩展面板搜索 `Pi for VS Code`，或
+
+```bash
+code --install-extension xiaobing94.pi-vscode
+```
+
+**从 VSIX 安装**（离线 / 内测版本）：
+
+```bash
+code --install-extension pi-vscode-0.2.0.vsix
+```
+
+安装后重新加载窗口即可。
+
+---
 
 ## 快速开始
 
+1. **打开面板**：点活动栏的 Pi 图标（或 `Ctrl+Alt+P`），聊天视图出现在侧栏；想让它在右侧辅助栏（Codex / Claude Code 同位置）就按 `Ctrl+Alt+Shift+P`。
+2. **信任工作区**：弹出提示时选择「信任并启用」。未授信工作区不会启动 Pi 进程。
+3. **直接对话**：输入需求，回车。AI 改动的文件会实时出现在 `Pi 变更` 视图和状态栏的 `Pi 变更 N` 计数里。
+4. **回看改动**：`Ctrl+Alt+D` 打开变更总览，或点聊天视图标题栏的 `$(diff-multiple)` 按对话轮次挑选某一轮看 diff。
+
+> 首次使用若提示「未找到 Pi CLI」，见下方 [故障排查](#故障排查)。
+
+---
+
+## 功能一览
+
+### 对话与模型
+- 流式输出、思考块折叠、工具卡片（含耗时 / 错误态 / 参数与结果折叠）、`/` 斜杠命令补全、`@` 文件引用、图片粘贴与拖拽
+- 运行中可 **steer** 插话或 **follow-up** 排队；`Pi: 取回排队消息` 收回
+- 模型 / 思考级别随时切换，状态栏显示上下文占用与累计花费，`Pi: 压缩上下文` 手动 compact
+- 扩展 UI 请求（确认 / 选择 / 输入 / 进度 / 通知）自动映射到原生 QuickPick 与输入框
+
+### 会话
+- 新建 / 重命名 / fork / clone / 导出 HTML / `/share` 预览
+- **磁盘历史会话**：扫描 `~/.pi/agent/sessions/**/*.jsonl`，按首条用户消息命名、本工作区优先、时间倒序；恢复前会校验文件存在
+- 崩溃后自动恢复上一次会话；`pi.multiSession` 开启后同一 folder 可并行多个独立会话并切换
+- `Pi: 在终端中打开（TUI）` 拉起真终端 Pi（与原生面板共用同一会话 JSONL）
+
+### 影子 Git 改动记录
+- **一轮对话一次提交**：工具执行只累积候选路径，`agent_settled` 时统一落一次提交；abort / IPC / settle 多信号合并改写同一 commit（不会产生重复提交）
+- 三个层次的采集：L1 Pi 事件 / L2 Pi 扩展 sidecar IPC / L3 `git status` + 编辑器变更，任一失败自动降级
+- `Pi 变更` 树按 `scope → 轮次 → 文件` 组织；原生 `vscode.diff` 左右对比；可复制文件内容 / 复制 diff 补丁 / 导出会话快照包
+- 变更总览面板：过滤、搜索、导出；编辑器标题栏「查看当前文件历次差异」
+- 工程外改动进 `external/` 独立树，只读导出目录浏览，绝不写回原绝对路径
+- 自动 GC + 保留期（默认 90 天），`Pi: 清除本会话影子数据` 随时清空
+
+### 与编辑器集成
+- 右键发送：选区 / 当前文件 / 资源管理器文件
+- 发送 Problems 诊断、Git 差异、暂存区差异
+- 生成 Git 提交信息（SCM 标题栏按钮）
+- 改动逐条「应用 / 拒绝」草稿：**只生成补丁草稿 + 二次确认，绝不自动覆盖**
+- 保存即审查（可选，带 debounce）
+- MCP 服务列表面板、子代理（subagent）树视图、诊断面板
+
+### 其他入口
+- `@pi` chat participant（需要安装 Copilot Chat 提供默认 chat agent；否则用右侧 Pi 面板）
+- `/bug` 报告向导
+
+---
+
+## 常用命令
+
+命令面板输入 `Pi:` 可列出全部 50 个命令，最常用的：
+
+| 命令 | 说明 |
+|---|---|
+| `Pi: 新建会话` / `Pi: 历史会话（浏览并恢复）` | 会话起点 |
+| `Pi: 打开变更总览` | 全部改动列表（过滤 / 搜索 / 导出） |
+| `Pi: 历史变更（按对话轮次查看改动）…` | 挑某一轮看 diff |
+| `Pi: 查看本轮全部差异` / `Pi: 查看本会话累计差异` | 直接出补丁 |
+| `Pi: 查看最近一轮改动（原生差异）` | 原生左右对比 |
+| `Pi: 在终端中打开（TUI）` | 切到真终端 Pi |
+| `Pi: 逐条审查改动（应用 / 拒绝）` | 补丁草稿流程 |
+| `Pi: 生成 Git 提交信息` | 基于暂存区 / 改动生成 message |
+| `Pi: 跨会话成本 / 变更统计` | 全局汇总 |
+| `Pi: 打开诊断面板` | 运行时、RPC 状态、日志排障 |
+
+### 快捷键
+
+| 快捷键 | 命令 |
+|---|---|
+| `Ctrl+Alt+P` / `Cmd+Alt+P` | 聚焦左侧 Pi 聊天 |
+| `Ctrl+Alt+Shift+P` / `Cmd+Alt+Shift+P` | 在右侧辅助栏打开 Pi |
+| `Ctrl+Alt+D` | 打开变更总览 |
+| `Ctrl+Alt+Shift+D` / `Cmd+Alt+Shift+D` | 查看最近一轮改动（原生差异） |
+| `Ctrl+Alt+Enter` | 把选中代码发送给 Pi |
+| `Ctrl+Alt+X` | 中断当前运行（仅运行中生效） |
+
+---
+
+## 配置
+
+全部设置都在 `Settings → Pi`。运行时相关：
+
+| 设置 | 默认 | 说明 |
+|---|---|---|
+| `pi.executablePath` | `""` | Pi 启动器路径；空 = 自动探测 |
+| `pi.cliEntryPath` | `""` | Pi 的 `cli.js`；空 = 自动探测托管安装 |
+| `pi.nodePath` | `""` | 运行 Pi 的 `node`（Windows 上优先真 `node.exe`） |
+| `pi.model` | `""` | `provider/modelId`，空 = 沿用 Pi 默认模型 |
+| `pi.thinkingLevel` | `medium` | `off` … `max` |
+| `pi.enableTui` | `true` | 是否显示 TUI 入口 |
+| `pi.multiSession` | `false` | 允许每 folder 并行多会话 |
+
+影子 Git 相关：
+
+| 设置 | 默认 | 说明 |
+|---|---|---|
+| `pi.shadowGit.enabled` | `true` | 总开关 |
+| `pi.shadowGit.location` | `globalStorage` | `globalStorage` / `workspaceStorage` / `custom` |
+| `pi.shadowGit.customPath` | `""` | `location=custom` 时使用 |
+| `pi.shadowGit.scope` | `workspaceAndExternal` | 是否记录工程外改动 |
+| `pi.shadowGit.externalPolicy` | `explicitWrites` | `explicitWrites`（推荐）/ `allowlistOnly` / `all` |
+| `pi.shadowGit.externalAllowlist` | `[]` | 额外允许记录的工程外根目录（绝对路径） |
+| `pi.shadowGit.maxFileBytes` | `2097152` | 单文件上限 |
+| `pi.shadowGit.maxTotalBytes` | `67108864` | base 快照总量上限 |
+| `pi.shadowGit.baseMode` | `auto` | 超限自动降级为仅候选 |
+| `pi.shadowGit.excludeGlobs` | 见设置 | 默认排除 `node_modules` / `.git` / `dist` / `build` / `*.log` / 会话目录 |
+| `pi.shadowGit.redactSecrets` | `true` | 疑似密钥只记路径 + 大小 + sha256 |
+| `pi.shadowGit.retentionDays` / `autoGc` | `90` / `true` | 保留期与自动清理 |
+| `pi.shadowGit.usePiExtension` | `true` | 注入 Pi 扩展做精确采集，失败自动降级 |
+
+保存即审查：`pi.reviewOnSave.enabled`（默认 `false`）、`.debounceMs`（`3000`）、`.prompt`（模板，`${files}` 占位）。
+
+---
+
+## 影子仓库原理
+
+```
+hash-object -w  →  update-index -z --index-info  →  write-tree
+                →  commit-tree  →  update-ref (CAS)
+```
+
+全程使用独立的临时索引和裸仓库（默认 `globalStorageUri/pi-vscode/shadow/<repoKey>.git`），不设 `--work-tree`，因此**不受你的 `.gitignore`、暂存区、分支、子模块影响**；内容按内容寻址自动去重，元数据存 `refs/pi/meta/<commit>`（不产生 notes 噪音提交）。
+
+## 安全与边界
+
+- **只读记录**：不自动应用到工作区、不自动 commit、不自动回滚；「应用」只生成待人工检查的补丁草稿。
+- **未授信不启动**：工作区未授信时不会 spawn 任何 Pi 进程。
+- **不碰用户仓库**：影子仓库与 `refs/pi/*` 完全独立。
+- **密钥脱敏**：疑似密钥文件默认只存路径 / 大小 / sha256。
+- **工程外只读**：`external/` 中的文件只用于查看与导出，**绝不写回原绝对路径**。
+- **采集局限**：L3 只能覆盖已知候选路径，`bash` 脚本在别处创建且从未被提及的文件不保证记录 —— 可用 `Pi: 手动重新扫描当前工作区` 补一次。
+
+---
+
+## 故障排查
+
+| 现象 | 处理 |
+|---|---|
+| `未找到 Pi CLI（需要 >= 1.5.2）` | 先 `pi --version` 确认可用。扩展自动探测的是 `~/.pi/agent/install/releases/*`（官方安装脚本布局）；如果你用 npm 全局安装，请显式指定 `pi.nodePath`（真 `node.exe`）+ `pi.cliEntryPath`（`…/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js`） |
+| 进程启动即退出 | 检查 `pi.nodePath` 是否误指 `Code.exe`；打开 `Pi: 打开诊断面板` 看 `stderr` 与 spawn 命令行 |
+| 变更视图为空 | 确认 `pi.shadowGit.enabled`；`Pi: 手动重新扫描当前工作区`；看输出面板 `Pi` 通道是否有 `git` 报错 |
+| 历史会话列表为空 | 会话文件在 `~/.pi/agent/sessions/`；已删除的文件不会列出（这是有意的，避免 Pi 把缺失路径当成新会话） |
+| 选项里没有 `@pi` | 需要 Copilot Chat 之类提供默认 chat agent 的扩展；否则直接用右侧 Pi 面板 |
+| 右侧栏打不开 | VS Code ≥ 1.96 才有 `secondarySidebar`；或手动把 Pi 图标拖到辅助栏 |
+
+诊断面板 + 输出通道 `Pi` 是排障首选，日志包含完整 spawn 命令行与 RPC 状态。
+
+---
+
+## 开发
+
 ```bash
 npm install
-npm run build          # esbuild 产出 dist/extension.js、dist/chat.js
+npm run build          # esbuild → dist/extension.js、dist/chat.js
+npm run watch          # 增量构建
 npm run typecheck      # tsc --noEmit
-npm test               # 先构建，再跑集成测试（临时目录 + 临时 bare 仓库 + 真实 pi RPC 冒烟）
+npm test               # 构建 + node --test 集成测试
 npm run package        # 产出 pi-vscode-0.2.0.vsix
 ```
 
-在 VS Code 里按 `F5`（需 `.vscode/launch.json` 指向扩展开发宿主），或用
-`code --install-extension pi-vscode-0.2.0.vsix` 安装后重新加载窗口。
+调试：VS Code 打开本目录按 `F5`（`.vscode/launch.json` 已配好扩展开发宿主）。
 
-要求：VS Code ≥ 1.96（右侧辅助栏 `secondarySidebar` 容器）、Pi ≥ 1.5.2、Git ≥ 2.40、Node ≥ 22.19（本机实测 VS Code 1.108.2 / Node v24.14 / Git 2.52 / Pi 1.5.2）。
-Windows 优先，同时兼容 POSIX 路径语义。
+测试全部使用 `mkdtemp` 临时目录与临时 bare 仓库，**不触碰真实工程**：JSONL framing、影子 Git 纯对象层、工程外策略与脱敏、PathMapper/glob、扩展激活、真实 `pi --mode rpc` 冒烟、/model 切换、历史会话发现、会话切换防护、EditTracker 逐轮 diff。
 
-## 已实现的能力
-
-| 设计章节 | 实现 |
-|---|---|
-| §3 贡献点 | 活动栏 `pi.chat` + **右侧辅助栏 `pi.chatSecondary`**（两个视图共用同一个 `ChatViewProvider`，因此共用同一份 Pi 会话、模型和改动记录）；资源管理器 `Pi 会话` / `Pi 变更` / `Pi 子代理`；全部命令、菜单、快捷键、配置项 |
-| §3 右侧 Chat | `Ctrl+Alt+Shift+P` / 「Pi: 在右侧栏打开 / 选中 Pi」直接打开右侧 Pi 面板；`@pi` chat participant 可让 Pi 出现在 VS Code 内置 Chat 里（需要该 Chat 视图可用：安装 Copilot Chat 等提供默认 agent 的扩展），可用「Pi: 在原生 Chat 里选择 @pi」预填 `@pi`。没有默认 agent 时请直接用右侧 Pi 面板 |
-| §4 RPC | `JsonlDecoder` 严格按 LF 切分（不用 `readline`）、`StringDecoder`、背压、id 关联、`RpcGateway` 重连/优雅退出、`UiBridge` 把 `extension_ui_request` 映射到原生 QuickPick/输入框/确认框/通知/状态栏 |
-| §4.7 TUI | `TuiLauncher` 用 `node + cli.js --session/--continue` 起真终端，退出后 `switch_session` + `get_messages` 回放；原生 ↔ TUI 共用同一会话 JSONL |
-| §5 Webview | 文本可选中、Ctrl+C / Ctrl+F / Ctrl+A 不拦截；剪贴板 `text/plain` + `text/html` 双写；代码块/整条消息/工具输出/思考复制；折叠状态与滚动位置存 `getState()`；`/` 补全、`@` 文件、图片粘贴拖拽、steer/排队、工具卡片与 `path:line` 跳转 |
-| §6 影子 Git | `PathMapper`（Windows 盘符/UNC/`\\?\`/MSYS、大小写、TAB 校验、排除规则）、`ShadowGit`（`hash-object -w --no-filters`、`update-index -z --index-info`、`read-tree`、`mktree`、`commit-tree`、`update-ref` CAS、`cat-file --batch`、`notes`）、`Collector`（L1 事件 / L2 sidecar / L3 git status+编辑器）、`SnapshotService`（base + 每轮 commit、元数据 notes、脱敏、大小上限、CAS 重试、保留/GC） |
-| §6.8 工程外 | `external/` 独立树、`⚠ 工程外` TreeView 分组、状态栏警示、只读导出目录 `ExternalBrowser`、默认策略 `explicitWrites`（仅工具显式写入或白名单） |
-| §6.6 影子提交 | **一轮对话一次提交**（`agent_settled` 落库，工具/文件只累积候选）；同一轮的 abort / IPC / settle 信号合并改写同一 commit；subject = 本轮用户问题；元数据改存 `refs/pi/meta/<commit>` blob ref，不再产生 `Notes added by...` 噪音提交 |
-| §6.9 pi 扩展 | `pi-extensions/shadow-snapshot.ts`：`tool_call`/`tool_result` 收集路径、sidecar JSONL IPC、`agent_before_settle` 追加 `pi.shadow.snapshot` custom entry、`agent_settled{aborted}` 补快照；RPC 与 TUI 同时生效；失败可降级 L1+L3 |
-| §7 变更入口 | `ChangeTree`（scope → turn → file）、`ShadowDocProvider`（`pi-shadow://` 虚拟文档）、`vscode.diff` 原生左右对比、本轮/累计补丁、复制内容/补丁、总览页（过滤、搜索、导出）、状态栏、编辑器标题「查看历次差异」 |
-| §8 P1 | 模型/思考级别切换、用量条、会话新建/恢复/切换/重命名/fork/clone/导出 HTML、**磁盘历史会话扫描**（聊天视图顶部「历史会话 N」按钮 + 空状态「历史会话 / 新建会话」按钮 + 视图标题 `$(versions)` 图标 + `pi.sessions` 视图「历史会话」分组 + `Pi: 历史会话（浏览并恢复）` QuickPick，按首条用户消息/自定义名称展示，本工作区优先、时间倒序）、`get_tree` 会话树、右键发送选区/文件/Problems/Git 差异、`/share` 预览、崩溃自动恢复、诊断面板 |
-| §8 P2 | 改动逐条「应用/拒绝」草稿（**只生成补丁草稿，二次确认，绝不自动覆盖**）、`pi.multiSession` 并行会话（`Pi: 切换活动会话` → 新建并行 RPC 进程）、`pi.agents` 子代理分组、MCP 面板（`pi mcp list --json`）、跨会话统计、保存即审查、提交信息生成、暂存区差异、`/bug` 向导、`/share` 预览 |
-
-## 默认值（设计文档「待确认问题」的拍板结果）
-
-| 问题 | 采用值 |
-|---|---|
-| 工程外白名单 | `explicitWrites`：工具显式写入的路径 + 默认白名单（`~/.pi/agent/`、VS Code 用户设置目录、临时目录显式写入）+ 用户 `externalAllowlist`；疑似密钥默认脱敏 |
-| 快照粒度 | `hybrid`：每轮工具结束记候选，`agent_settled` 统一落一次（可切 `settled` / `turn` / `tool`） |
-| base 范围 | `auto`：尝试全量索引，超过 `maxTotalBytes` 自动降级为仅候选（可切 `full` / `candidatesOnly`） |
-| 影子仓库位置 | `globalStorageUri/pi-vscode/shadow/<repoKey>.git`（可切 `workspaceStorage` / `custom`） |
-| 自动注入 pi 扩展 | 默认开启（`pi.shadowGit.usePiExtension`），加载失败自动降级到 L1+L3 |
-
-`pi.multiSession` 默认关闭；开启后通过命令面板的 `Pi: 切换活动会话（多工作区 / 多会话）` 可为当前 folder 再启动一个独立 `pi --mode rpc` 进程（独立会话 JSONL / 影子 ref / IPC 目录），并用 QuickPick 切换活动会话。
-
-## 影子仓库一句话原理
-
-```
-hash-object -w   →   update-index -z --index-info   →   write-tree
-                →   commit-tree   →   update-ref (CAS)
-```
-
-全程用独立的临时索引和裸仓库，不设置 `--work-tree`，因此不受用户 `.gitignore`、暂存区、分支、子模块影响；文件内容按内容寻址去重，工程外改动统一落在 `external/` 目录下单独展示。
-
-## 目录结构
+目录结构：
 
 ```
 src/core/          Config / Log / WorkspaceRegistry / Diagnostics / AppController
 src/pi/            Resolver / Jsonl / protocol / RpcGateway / UiBridge
 src/changes/       PathMapper / ShadowGit / Collector / SnapshotService
                    ChangeTree / ShadowDocProvider / DiffCommands / OverviewPanel
-                   ExternalBrowser / ExtensionIpc
-src/session/       SessionTree / TuiLauncher
-src/views/         ChatViewProvider / StatusBar
+                   ExternalBrowser / ExtensionIpc / EditTracker
+src/session/       SessionTree / SessionDiscovery / TuiLauncher
+src/views/         ChatViewProvider / StatusBar / PiChatParticipant
 src/editor/        SendCommands / McpPanel
 media/chat/        webview 前端（main.ts / render.ts / clipboard.ts / style.css）
 pi-extensions/     shadow-snapshot.ts（Pi 侧扩展，jiti 直接加载 .ts）
-test/integration/  helpers + shadow-git + rpc-smoke
+test/integration/  helpers + shadow-git + rpc-smoke + session-*
 ```
 
-## 测试覆盖
+完整的架构、命令规范与验收标准见仓库内 `DESIGN.md`（不随 VSIX 分发）。
 
-- `JSONL framing splits only on LF and preserves U+2028/U+2029 and CRLF`
-- `ShadowGit pure-object layer: base + 3 turns, workspace/external split, CRLF, spaces, chinese, TAB skip, notes, CAS`
-- `external policy: explicitWrites ... sensitive files are redacted`
-- `PathMapper/globMatch: Windows drive, UNC, MSYS, exclusions, case-insensitive scope`
-- `extension bundle activates: views, commands, tree providers and trust gate`
-- `real pi --mode rpc: get_state/get_commands, extension loads, graceful stdin shutdown`
-- `pi CLI --version reports >= 1.5.2 and the extension source exists`
+## 版本
 
-测试不触碰用户真实工程：全部使用 `mkdtemp` 临时目录与临时 bare 仓库。
+当前 `0.2.0`。P0 + P1 + P2 全量能力已实现，P2 部分（多会话、保存即审查、子代理视图）为可选 / 实验性。
 
-## 已知边界（与设计文档一致）
+## License
 
-- 历史会话来自 `~/.pi/agent/sessions/**/*.jsonl` 的真实文件扫描，不是内存里的「最近使用」列表：已删除的会话文件不会被列出；点击前会再校验文件存在，避免 Pi CLI 1.5.2 把不存在的路径当成一个**新的空会话**打开。其他工作区的会话也会列出（标注 cwd），但恢复后 Pi 会话仍绑定当前工作区。
-
-- 两个「历史」入口的区分：聊天视图标题栏的 `$(diff-multiple)` 图标 = **历史变更**（按对话轮次看文件改动，`Pi: 历史变更…`）；**历史会话**在聊天面板顶部会话栏的「历史会话 N」按钮、空状态里的按钮、以及 `pi.sessions` 视图标题的 `$(versions)` 图标 / 命令面板 `Pi: 历史会话（浏览并恢复）`。
-
-- L3 只能覆盖「已知候选路径」；任意 `bash` 脚本在别处创建的、从未被提及的文件不保证记录。可用 `Pi: 手动重新扫描当前工作区` 补一次。
-- 影子快照是**只读记录**：不自动应用到工作区、不自动 commit 到用户仓库、不自动回滚；P2 的「应用」只生成待人工检查的补丁草稿。
-- 工程外文件绝不写回原绝对路径。
-- 未授信工作区不 spawn 任何 Pi 进程；授信后自动启动。
-
-## 参考（本机 Pi 1.5.2 文档）
-
-`docs/rpc.md`、`docs/rpc-commands.md`、`docs/json.md`、`docs/rpc-extension-ui.md`、
-`docs/message-types.md`、`docs/extensions.md`、`docs/session-format.md`、
-`docs/cli-integration.md`、`docs/windows.md`。
+MIT
