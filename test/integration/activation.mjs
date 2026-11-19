@@ -34,6 +34,8 @@ test('extension bundle activates: views, commands, tree providers and trust gate
     'pi.openSessionDiff', 'pi.openExternalDir', 'pi.sendSelection', 'pi.selectModel',
     'pi.abort', 'pi.reviewChanges', 'pi.mcpList', 'pi.bugReportWizard',
     'pi.chat.focusSecondary', 'pi.chat.askInNativeChat',
+    // P1 recovery entry points: a failed spawn must be diagnosable and fixable.
+    'pi.checkEnvironment', 'pi.restartPi', 'pi.openDocs',
   ]) assert.ok(commands.has(name), `command ${name} registered`);
   assert.ok(context.subscriptions.length > 0, 'disposables registered in context');
 
@@ -95,6 +97,56 @@ test('both Pi views share one session: messages broadcast, replies stay local', 
   await Promise.all(left.listeners.map((fn) => Promise.resolve(fn({ type: 'ready' }))));
   assert.ok(left.sent.some((m) => m.type === 'replace'), 'ready replies to requesting view');
   assert.ok(!right.sent.some((m) => m.type === 'replace'), 'ready does not replay into the other view');
+
+  await exports.deactivate();
+  for (const d of context.subscriptions) d.dispose?.();
+  await rm(testRoot, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+});
+
+test('a failing gateway pushes an actionable banner instead of failing silently', { timeout: 30_000 }, async () => {
+  const vscode = makeVscodeMock();
+  const providers = new Map();
+  vscode.window.registerWebviewViewProvider = (id, provider) => {
+    providers.set(id, provider);
+    return new vscode.Disposable();
+  };
+  vscode.workspace.workspaceFolders = [{ name: 'proj', uri: vscode.Uri.file(path.join(root, 'test')), index: 0 }];
+  vscode.workspace.getWorkspaceFolder = () => vscode.workspace.workspaceFolders[0];
+  const testRoot = await mkdtemp(path.join(tmpdir(), 'pi-vscode-banner-'));
+  const context = {
+    extensionUri: vscode.Uri.file(root),
+    globalStorageUri: vscode.Uri.file(path.join(testRoot, 'global')),
+    storageUri: vscode.Uri.file(path.join(testRoot, 'workspace')),
+    subscriptions: [],
+    globalState: { get: () => [], update: async () => {} },
+    extension: { packageJSON: { version: '0.2.0' } },
+  };
+  const exports = loadBundle(path.join(root, 'dist', 'extension.js'), vscode);
+  await exports.activate(context);
+
+  const sent = [];
+  const view = {
+    webview: {
+      options: {}, html: '',
+      asWebviewUri: (u) => u,
+      postMessage: async (m) => { sent.push(m); return true; },
+      onDidReceiveMessage: () => new vscode.Disposable(),
+    },
+    title: 'Pi', show() {}, onDidDispose: () => new vscode.Disposable(),
+  };
+  providers.get('pi.chat').resolveWebviewView(view);
+
+  // The provider is shared by both views; drive it exactly as AppController does.
+  providers.get('pi.chat').setStateInfo
+    ? providers.get('pi.chat').setStateInfo(undefined, undefined, undefined, { status: 'error', error: '未找到 Pi CLI（需要 >= 1.5.2）' })
+    : undefined;
+
+  const banner = sent.filter((m) => m.type === 'banner').pop();
+  assert.ok(banner, 'a banner message is posted');
+  assert.equal(banner.level, 'error');
+  assert.match(banner.text, /未找到 Pi CLI/);
+  const commands = (banner.actions ?? []).map((a) => a.command);
+  assert.deepEqual(commands, ['pi.restartPi', 'pi.checkEnvironment', 'pi.showDiagnostics'], 'each action is a real command');
 
   await exports.deactivate();
   for (const d of context.subscriptions) d.dispose?.();

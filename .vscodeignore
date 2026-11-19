@@ -1,18 +1,26 @@
-.pi-vscode-test/**
-test/**
+# Sources and build tooling are not shipped; the extension runs from dist/.
 src/**
 media/chat/*.ts
+test/**
+.pi-vscode-test/**
 node_modules/**
-*.vsix
-shotcut.png
-DESIGN.md
-CONTRIBUTING.md
 esbuild.mjs
 tsconfig.json
 .vscode/**
+.github/**
+
+# Repo-only documents
+DESIGN.md
+CONTRIBUTING.md
+
+# Local artifacts
+*.vsix
+shotcut.png
+企业微信截图_*.png
+dist/*.map
+dist/testable.js
+
+# Manifest noise
 .gitignore
 package-lock.json
 pi-extensions/*.d.ts
-dist/*.map
-dist/testable.js
-.github/**

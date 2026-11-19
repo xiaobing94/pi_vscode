@@ -62,6 +62,47 @@ function electronAsNodeEnv(command: string): NodeJS.ProcessEnv {
 
 function releasesDir(): string { return path.join(agentDir(), 'install', 'releases'); }
 
+/**
+ * Global npm installs put the package here: `<npm root -g>/@earendil-works/pi-coding-agent`.
+ * The official install script uses ~/.pi/agent instead, so both layouts must be
+ * probed or `npm i -g` users hit "Pi CLI not found" with no explanation.
+ */
+function npmlRootCandidates(): string[] {
+  const roots: string[] = [];
+  const prefix = process.env.npm_config_prefix?.trim();
+  if (prefix) roots.push(path.join(prefix, 'lib', 'node_modules'), path.join(prefix, 'node_modules'));
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+    roots.push(path.join(appData, 'npm', 'node_modules'));
+    if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, 'nodejs', 'node_modules'));
+  } else {
+    roots.push(
+      '/usr/local/lib/node_modules',
+      '/usr/lib/node_modules',
+      path.join(home, '.npm-global', 'lib', 'node_modules'),
+      path.join(home, '.nvm', 'versions', 'node', 'current', 'lib', 'node_modules'),
+    );
+  }
+  return roots.filter((r) => { try { return existsSync(r); } catch { return false; } });
+}
+
+/** Locate a globally npm-installed pi CLI, if any. */
+function detectGlobalNpm(): { version: string; cli: string } | undefined {
+  for (const root of npmlRootCandidates()) {
+    const pkg = path.join(root, '@earendil-works', 'pi-coding-agent');
+    for (const candidate of [path.join(pkg, 'dist', 'bundle', 'cli.js'), path.join(pkg, 'dist', 'cli.js')]) {
+      if (!existsSync(candidate)) continue;
+      let version = 'unknown';
+      try {
+        version = JSON.parse(require('node:fs').readFileSync(path.join(pkg, 'package.json'), 'utf8')).version ?? version;
+      } catch { /* version is informational only */ }
+      return { version, cli: candidate };
+    }
+  }
+  return undefined;
+}
+
 function cliForRelease(releaseDir: string): string {
   const pkg = path.join(releaseDir, 'node_modules', '@earendil-works', 'pi-coding-agent');
   for (const candidate of [
@@ -71,9 +112,19 @@ function cliForRelease(releaseDir: string): string {
   return '';
 }
 
+/** Numeric semver comparison, ignoring build metadata and pre-release tags. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[-+]/)[0].split('.').map((n) => Number(n) || 0);
+  const pb = b.split(/[-+]/)[0].split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 /** Resolve the managed install version, with a fallback to the highest version present. */
-function detectManaged(): { version: string; cli: string } | undefined {
-  const currentFile = path.join(agentDir(), 'install', 'current-version');
+function detectManaged(): { version: string; cli: string } | undefined {  const currentFile = path.join(agentDir(), 'install', 'current-version');
   const versions: string[] = [];
   try {
     const current = require('node:fs').readFileSync(currentFile, 'utf8').trim();
@@ -123,17 +174,18 @@ export class Resolver {
   private async doResolve(): Promise<PiRuntime | undefined> {
     const cfg = this.config.get();
     const managed = detectManaged();
+    const globalNpm = detectGlobalNpm();
     const node = cfg.nodePath.trim() || findNode();
     const candidates: Array<{ command: string; prefix: string[]; cli: string; source: string; version?: string }> = [];
 
     if (cfg.nodePath.trim() || cfg.cliEntryPath.trim()) {
-      const cli = cfg.cliEntryPath.trim() || managed?.cli || '';
+      const cli = cfg.cliEntryPath.trim() || managed?.cli || globalNpm?.cli || '';
       if (cli) candidates.push({
         command: node,
         prefix: [cli, '--mode', 'rpc'],
         cli,
         source: 'pi.nodePath + pi.cliEntryPath',
-        version: managed?.version,
+        version: managed?.version ?? globalNpm?.version,
       });
     }
 
@@ -143,6 +195,15 @@ export class Resolver {
       cli: managed.cli,
       source: `managed install ${managed.version}`,
       version: managed.version,
+    });
+
+    // `npm install -g @earendil-works/pi-coding-agent` (no install script).
+    if (globalNpm) candidates.push({
+      command: node,
+      prefix: [globalNpm.cli, '--mode', 'rpc'],
+      cli: globalNpm.cli,
+      source: `global npm ${globalNpm.version}`,
+      version: globalNpm.version,
     });
 
     if (cfg.executablePath.trim()) {
@@ -204,4 +265,30 @@ export class Resolver {
   }
 
   dispose(): void { for (const d of this.disposables) d.dispose(); }
+
+  /** Drop the cached runtime so the next resolve() re-probes the filesystem. */
+  invalidate(): void { this.cached = undefined; this.checking = undefined; }
+
+  /** Minimum supported Pi CLI version; older builds lack the RPC commands we rely on. */
+  static readonly MIN_VERSION = '1.5.2';
+
+  isVersionTooOld(version: string | undefined): boolean {
+    if (!version || !/^\d+\.\d+\.\d+/.test(version)) return false; // 'unknown' → cannot judge
+    return compareVersions(version, Resolver.MIN_VERSION) < 0;
+  }
+
+  /** Candidate launchers probed by `resolve()`, for the environment report. */
+  candidatesForReport(): Array<{ source: string; cli: string; exists: boolean }> {
+    const cfg = this.config.get();
+    const managed = detectManaged();
+    const globalNpm = detectGlobalNpm();
+    const out: Array<{ source: string; cli: string; exists: boolean }> = [];
+    if (cfg.cliEntryPath.trim()) out.push({ source: 'pi.cliEntryPath', cli: cfg.cliEntryPath.trim(), exists: existsSync(cfg.cliEntryPath.trim()) });
+    if (managed) out.push({ source: `managed install ${managed.version}`, cli: managed.cli, exists: true });
+    if (globalNpm) out.push({ source: `global npm ${globalNpm.version}`, cli: globalNpm.cli, exists: true });
+    const launcher = path.join(agentDir(), 'bin', 'pi-launcher.js');
+    if (existsSync(launcher)) out.push({ source: 'pi-launcher.js', cli: launcher, exists: true });
+    if (cfg.executablePath.trim()) out.push({ source: 'pi.executablePath', cli: cfg.executablePath.trim(), exists: existsSync(cfg.executablePath.trim()) });
+    return out;
+  }
 }

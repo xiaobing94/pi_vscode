@@ -8,6 +8,8 @@ export interface PiConfigShape {
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   enableTui: boolean;
   multiSession: boolean;
+  /** Open the diagnostics panel when the Pi process fails to start. */
+  showDiagnosticsOnError: boolean;
   reviewOnSave: { enabled: boolean; debounceMs: number; prompt: string };
   shadowGit: {
     enabled: boolean;
@@ -37,6 +39,7 @@ const DEFAULTS: PiConfigShape = {
   thinkingLevel: 'medium',
   enableTui: true,
   multiSession: false,
+  showDiagnosticsOnError: true,
   reviewOnSave: {
     enabled: false,
     debounceMs: 3000,
@@ -69,12 +72,29 @@ export class Config {
   private value: PiConfigShape = structuredClone(DEFAULTS);
   private readonly emitter = new vscode.EventEmitter<PiConfigShape>();
   readonly onDidChange = this.emitter.event;
+  private readonly restartEmitter = new vscode.EventEmitter<string[]>();
+  /** Fires with the changed keys that only take effect after a Pi restart. */
+  readonly onDidChangeRuntime = this.restartEmitter.event;
   private readonly disposables: vscode.Disposable[] = [];
+
+  /**
+   * Settings baked into the spawned argv or into runtime discovery. Changing
+   * them does nothing until the child process is replaced, so the extension
+   * has to say so instead of silently ignoring the edit.
+   */
+  static readonly RESTART_KEYS = [
+    'pi.executablePath', 'pi.cliEntryPath', 'pi.nodePath', 'pi.model', 'pi.thinkingLevel',
+    'pi.multiSession', 'pi.shadowGit.enabled', 'pi.shadowGit.usePiExtension',
+    'pi.shadowGit.location', 'pi.shadowGit.customPath',
+  ] as const;
 
   constructor() {
     this.reload();
     this.disposables.push(vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('pi')) this.reload();
+      if (!e.affectsConfiguration('pi')) return;
+      this.reload();
+      const changed = Config.RESTART_KEYS.filter((key) => e.affectsConfiguration(key));
+      if (changed.length) this.restartEmitter.fire([...changed]);
     }));
   }
 
@@ -99,5 +119,9 @@ export class Config {
 
   get(): PiConfigShape { return this.value; }
   static get defaults(): PiConfigShape { return structuredClone(DEFAULTS); }
-  dispose(): void { for (const d of this.disposables) d.dispose(); this.emitter.dispose(); }
+  dispose(): void {
+    for (const d of this.disposables) d.dispose();
+    this.emitter.dispose();
+    this.restartEmitter.dispose();
+  }
 }

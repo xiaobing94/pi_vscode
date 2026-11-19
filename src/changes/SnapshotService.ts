@@ -77,6 +77,7 @@ export class SnapshotService {
   /** Whether the current turn has already produced a real commit. */
   private pendingRebase: { commit: string; parent?: string; candidates: Array<{ absPath: string; origin: string; explicitWrite: boolean; subagentId?: string }> } | undefined;
   private disposed = false;
+  private initialError: Error | undefined;
   private lastHead?: string;
   private baseCommit?: string;
   private readonly version: string;
@@ -128,13 +129,14 @@ export class SnapshotService {
 
   async initialize(): Promise<void> {
     if (!this.config.get().shadowGit.enabled) return;
+    // Surface shadow-repo failures instead of only logging them: a broken git
+    // install shows up as a permanently empty `Pi 变更` view otherwise.
     await this.git.ensureRepo();
     await this.git.migrateLegacyNotes().catch((err) => this.log.warn(`shadow notes migration: ${String(err)}`));
     this.baseCommit = await this.git.readRef(this.baseRef);
     this.lastHead = await this.git.readRef(this.headRef);
     await this.loadTurns();
-    const d = this.collector.startIpcWatch();
-    this.disposables.push(d);
+    this.disposables.push(this.collector.startIpcWatch());
     if (this.config.get().shadowGit.autoGc) {
       const timer = setInterval(() => void this.git.gc(this.config.get().shadowGit.retentionDays), 6 * 60 * 60 * 1000);
       timer.unref?.();
@@ -143,6 +145,27 @@ export class SnapshotService {
     this.signal.fire(this.sessionKey);
     void this.ensureBase().catch((err) => this.log.warn(`shadow base: ${String(err)}`));
   }
+
+  /**
+   * Like initialize(), but never throws: records the reason so the change view
+   * can explain itself and offer `Pi: 检查运行环境`. Returns the error, if any.
+   */
+  async tryInitialize(): Promise<Error | undefined> {
+    try {
+      await this.initialize();
+      this.initialError = undefined;
+      return undefined;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.initialError = error;
+      this.log.error('shadow repo unavailable', error);
+      this.signal.fire(this.sessionKey);
+      return error;
+    }
+  }
+
+  /** Why the shadow repository is unusable, or undefined when it is fine. */
+  get unavailableReason(): Error | undefined { return this.initialError; }
 
   onEvent(event: AgentEvent): void {
     if (!this.config.get().shadowGit.enabled) return;

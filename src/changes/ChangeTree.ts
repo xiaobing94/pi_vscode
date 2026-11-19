@@ -6,6 +6,7 @@ export type ChangeNode =
   | { kind: 'turn'; turn: TurnRecord }
   | { kind: 'change'; change: ChangeRecord }
   | { kind: 'info'; label: string; description?: string }
+  | { kind: 'unavailable'; label: string; description?: string }
   | { kind: 'subagentGroup'; id: string; label: string; count: number };
 
 /** TreeView: Pi 变更 — scope → turn → file (§7.2). */
@@ -46,8 +47,7 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
         return item;
       }
       case 'turn': {
-        const m = element.turn.meta;
-        const item = new vscode.TreeItem(`第 ${m.turnIndex} 轮 · ${(m.prompt ?? m.reason).slice(0, 36) || '无标题'}`, vscode.TreeItemCollapsibleState.Collapsed);
+        const m = element.turn.meta;        const item = new vscode.TreeItem(`第 ${m.turnIndex} 轮 · ${(m.prompt ?? m.reason).slice(0, 36) || '无标题'}`, vscode.TreeItemCollapsibleState.Collapsed);
         item.description = `${element.turn.changes.length} 项`;
         item.tooltip = `${m.createdAt}\n模型: ${m.model ?? '-'}\n工具: ${(m.toolCalls ?? []).join(', ') || '-'}${m.aborted ? '\n⚠ 本轮被中断' : ''}`;
         item.contextValue = 'pi.turn';
@@ -72,6 +72,14 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
         item.contextValue = 'pi.subagent';
         return item;
       }
+      case 'unavailable': {
+        const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
+        item.description = element.description;
+        item.iconPath = new vscode.ThemeIcon('error');
+        item.tooltip = `${element.description ?? ''}\n点击运行环境检查`;
+        item.command = { command: 'pi.checkEnvironment', title: '检查运行环境' };
+        return item;
+      }
       default: {
         const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
         item.description = element.description;
@@ -84,6 +92,13 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
   getChildren(element?: ChangeNode): ChangeNode[] {
     const service = this.snapshots();
     if (!service) return [{ kind: 'info', label: '影子仓库未初始化', description: 'pi.shadowGit.enabled' }];
+    if (!element) {
+      // A missing/broken git install used to leave this view silently empty.
+      const reason = service.unavailableReason;
+      if (reason) {
+        return [{ kind: 'unavailable', label: '影子仓库不可用', description: reason.message.split('\n')[0].slice(0, 90) }];
+      }
+    }
     const turns = service.getTurns();
     const matches = (c: ChangeRecord) => {
       if (this.filter === 'workspace' && c.scope !== 'workspace') return false;

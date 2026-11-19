@@ -134,6 +134,30 @@ function toast(text: string, level: 'info' | 'error' = 'info'): void {
   setTimeout(() => { t.hidden = true; }, 3500);
 }
 
+/**
+ * Connection banner. `error`/`warn` levels carry optional action buttons so a
+ * dead gateway offers "restart" / "check environment" instead of silence.
+ */
+function renderBanner(msg: { text?: string; level?: 'info' | 'warn' | 'error'; actions?: Array<{ label: string; command: string }> }): void {
+  const text = String(msg.text ?? '');
+  banner.textContent = '';
+  banner.className = msg.level ?? '';
+  if (!text) { banner.hidden = true; return; }
+  banner.hidden = false;
+  const label = document.createElement('span');
+  label.className = 'banner-text';
+  label.textContent = text;
+  banner.appendChild(label);
+  for (const action of msg.actions ?? []) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'banner-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => post({ type: 'runCommand', command: action.command }));
+    banner.appendChild(btn);
+  }
+}
+
 // ------------------------------------------------------------------ render
 
 function stat(added: number, removed: number): string {
@@ -401,7 +425,7 @@ window.addEventListener('message', (event: MessageEvent) => {
     case 'commands': commands = msg.commands ?? []; updateSlash(); break;
     case 'widgets': widgets.textContent = (msg.lines ?? []).join('\n'); break;
     case 'title': document.title = msg.title ?? 'Pi'; break;
-    case 'banner': banner.textContent = msg.text ?? ''; break;
+    case 'banner': renderBanner(msg); break;
     case 'toast': toast(String(msg.text ?? ''), msg.level === 'error' ? 'error' : 'info'); break;
     case 'activity': $('activity').textContent = msg.text || (streaming ? '运行中…' : '空闲'); break;
     case 'streaming':

@@ -23,6 +23,7 @@ import { McpPanel } from '../editor/McpPanel';
 import { DiagnosticsPanel } from '../core/Diagnostics';
 import { EditTracker } from '../changes/EditTracker';
 import { PiChatParticipant } from '../views/PiChatParticipant';
+import { RuntimeProbe } from './RuntimeProbe';
 
 export interface ControllerDeps {
   context: vscode.ExtensionContext;
@@ -46,6 +47,9 @@ export class AppController {  // async dispose; see dispose() below
   private readonly overview: OverviewPanel;
   private readonly diff: DiffCommands;
   private readonly docProvider: ShadowDocProvider;
+  private readonly probe: RuntimeProbe;
+  /** Bundles that already auto-opened the diagnostics panel. */
+  private readonly diagnosticsShownFor = new Set<string>();
 
   constructor(deps: ControllerDeps) {
     this.deps = deps;
@@ -70,6 +74,7 @@ export class AppController {  // async dispose; see dispose() below
       openOverview: () => this.overview.show(), gateway: () => this.active()?.gateway,
     });
     this.docProvider = new ShadowDocProvider({ log, snapshots: () => this.active()?.snapshots });
+    this.probe = new RuntimeProbe(config, log, resolver);
     this.disposables.push(
       vscode.window.registerTreeDataProvider('pi.sessions', this.sessionTree),
       vscode.window.registerTreeDataProvider('pi.changes', this.changeTree),
@@ -98,6 +103,15 @@ export class AppController {  // async dispose; see dispose() below
     // the first agent event so history is visible on first expansion.
     void this.sessionTree.refresh(this.active()?.gateway.getState().state);
     this.disposables.push(registry.onDidChange(() => void this.rebuild()));
+    // Runtime settings are baked into the spawn argv: tell the user instead of
+    // silently ignoring the change (previously only a debug log line).
+    this.disposables.push(config.onDidChangeRuntime((keys) => {
+      const list = keys.map((k) => k.replace(/^pi\./, '')).join(', ');
+      void vscode.window.showInformationMessage(
+        `Pi: ${list} 已修改，需要重启 Pi 进程后生效。`,
+        '立即重启', '稍后',
+      ).then((choice) => { if (choice === '立即重启') void vscode.commands.executeCommand('pi.restartPi'); });
+    }));
 
     const cmd = (name: string, fn: (...args: any[]) => unknown) => vscode.commands.registerCommand(name, fn);
     const active = () => this.active();
@@ -344,6 +358,24 @@ export class AppController {  // async dispose; see dispose() below
         chat.setStateInfo(state, stats as any);
         if (stats) void vscode.window.showInformationMessage(`Pi: ${state?.model?.id ?? '-'} · 上下文 ${stats.contextUsage?.percent ?? '?'}% · ${stats.tokens?.total ?? 0} tokens · $${(stats.cost ?? 0).toFixed(3)}`);
       }),
+      cmd('pi.checkEnvironment', async () => { await this.probe.show(); }),
+      cmd('pi.openDocs', async () => {
+        await vscode.env.openExternal(vscode.Uri.parse('https://pi.dev'));
+      }),
+      cmd('pi.restartPi', async () => {
+        const b = active();
+        if (!b) { void vscode.window.showWarningMessage('Pi: 没有活动的工作区。'); return; }
+        // Runtime resolution is cached; clear it so a new pi.nodePath takes effect.
+        this.deps.resolver.invalidate();
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Pi: 正在重启 Pi 进程…' },
+          async () => { await b.gateway.restart(); },
+        );
+        const s = b.gateway.getState();
+        if (s.status === 'ready') void vscode.window.showInformationMessage('Pi: 进程已重启。');
+        else void vscode.window.showWarningMessage(`Pi: 重启后状态为 ${s.status}${s.error ? ` — ${s.error}` : ''}`, '检查运行环境')
+          .then((c) => { if (c) void vscode.commands.executeCommand('pi.checkEnvironment'); });
+      }),
       cmd('pi.openPath', async (p: string, line = 1, col = 1) => {
         if (!p) return;
         const uri = await this.resolvePath(p);
@@ -482,11 +514,19 @@ export class AppController {  // async dispose; see dispose() below
   private async registerViews(bundle: Bundle, diagnostics: DiagnosticsPanel, statusBar: StatusBar): Promise<void> {
     const service = bundle.snapshots;
     service.bindSession(bundle.gateway.getState().state);
-    await service.initialize();
+    // Never throws: a broken git install must not abort activation. The reason
+    // is surfaced by ChangeTree and by `Pi: 检查运行环境`.
+    const initError = await service.tryInitialize();
     if (!this.changeTree.bound) { this.changeTree.bind(service); this.overview.bind(service); }
     else { this.changeTree.refresh(); this.overview.update(); }
     diagnostics.update();
     statusBar.refresh();
+    if (initError) {
+      void vscode.window.showWarningMessage(
+        `Pi: 影子仓库不可用，改动记录已暂停 — ${initError.message.split('\n')[0]}`,
+        '检查运行环境',
+      ).then((choice) => { if (choice) void vscode.commands.executeCommand('pi.checkEnvironment'); });
+    }
   }
 
   private subscribe(bundle: Bundle): void {
@@ -548,13 +588,20 @@ export class AppController {  // async dispose; see dispose() below
       }
     }));
     this.disposables.push(bundle.gateway.onDidChangeState((s) => {
-      chat.setStateInfo(s.state, s.stats as any);
+      chat.setStateInfo(s.state, s.stats as any, undefined, s);
       diagnostics.update();
       if (s.status === 'ready' && s.state) {
         bundle.snapshots.bindSession(s.state);
         // initialize() already queues a base snapshot; avoid a second racer.
         void bundle.gateway.getMessages().then((msgs) => chat.replay(msgs)).catch(() => {});
         void this.sessionTree.refresh(s.state);
+      }
+      if (s.status === 'error' && config.get().showDiagnosticsOnError !== false && !this.diagnosticsShownFor.has(bundle.key)) {
+        // A failed spawn has no in-context explanation; the panel carries the
+        // spawn argv, stderr and log lines needed to diagnose it. Only open once
+        // per bundle so a reconnect loop cannot spam new panels.
+        this.diagnosticsShownFor.add(bundle.key);
+        void diagnostics.show();
       }
     }));
     this.disposables.push(bundle.snapshots.onDidChange(() => {

@@ -33,7 +33,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     snapshots: () => controller?.snapshotsProvider(),
     gatewayState: () => controller?.gatewayProvider(),
   });
-  const diagnostics = new DiagnosticsPanel(config, log, () => controller?.gatewayProvider());
+  const diagnostics = new DiagnosticsPanel(config, log, () => controller?.gatewayProvider(), () => resolver.candidatesForReport());
 
   controller = new AppController({ context, config, log, registry, resolver, chat, statusBar, diagnostics });
   context.subscriptions.push(

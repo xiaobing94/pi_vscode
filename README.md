@@ -81,7 +81,7 @@ code --install-extension pi-vscode-0.2.0.vsix
 3. **直接对话**：输入需求，回车。AI 改动的文件会实时出现在 `Pi 变更` 视图和状态栏的 `Pi 变更 N` 计数里。
 4. **回看改动**：`Ctrl+Alt+D` 打开变更总览，或点聊天视图标题栏的 `$(diff-multiple)` 按对话轮次挑选某一轮看 diff。
 
-> 首次使用若提示「未找到 Pi CLI」，见下方 [故障排查](#故障排查)。
+> 首次使用若提示「未找到 Pi CLI」，运行 `Pi: 检查运行环境`，它会指出具体缺哪一环。见下方 [故障排查](#故障排查)。
 
 ---
 
@@ -136,7 +136,9 @@ code --install-extension pi-vscode-0.2.0.vsix
 | `Pi: 逐条审查改动（应用 / 拒绝）` | 补丁草稿流程 |
 | `Pi: 生成 Git 提交信息` | 基于暂存区 / 改动生成 message |
 | `Pi: 跨会话成本 / 变更统计` | 全局汇总 |
-| `Pi: 打开诊断面板` | 运行时、RPC 状态、日志排障 |
+| `Pi: 检查运行环境` | Node / Pi / Git / 信任四项体检 + 一键修复 |
+| `Pi: 重启 Pi 进程` | 改完 `pi.nodePath`、`pi.model` 等设置后生效 |
+| `Pi: 打开诊断面板` | 运行时、RPC 状态、候选路径、日志排障 |
 
 ### 快捷键
 
@@ -158,12 +160,14 @@ code --install-extension pi-vscode-0.2.0.vsix
 | 设置 | 默认 | 说明 |
 |---|---|---|
 | `pi.executablePath` | `""` | Pi 启动器路径；空 = 自动探测 |
-| `pi.cliEntryPath` | `""` | Pi 的 `cli.js`；空 = 自动探测托管安装 |
+| `pi.cliEntryPath` | `""` | Pi 的 `cli.js`；空 = 自动探测托管安装与 npm 全局安装 |
 | `pi.nodePath` | `""` | 运行 Pi 的 `node`（Windows 上优先真 `node.exe`） |
 | `pi.model` | `""` | `provider/modelId`，空 = 沿用 Pi 默认模型 |
 | `pi.thinkingLevel` | `medium` | `off` … `max` |
 | `pi.enableTui` | `true` | 是否显示 TUI 入口 |
 | `pi.multiSession` | `false` | 允许每 folder 并行多会话 |
+
+> 带 ⚠ 的设置会写入 Pi 的启动参数，**改动后需 `Pi: 重启 Pi 进程` 生效**（扩展会主动提示）：`pi.executablePath`、`pi.cliEntryPath`、`pi.nodePath`、`pi.model`、`pi.thinkingLevel`、`pi.multiSession`、`pi.shadowGit.enabled`、`pi.shadowGit.usePiExtension`、`pi.shadowGit.location`、`pi.shadowGit.customPath`。
 
 影子 Git 相关：
 
@@ -209,16 +213,20 @@ hash-object -w  →  update-index -z --index-info  →  write-tree
 
 ## 故障排查
 
+**第一步永远是 `Pi: 检查运行环境`。** 它会分别检查 Node.js、Pi CLI、Git、工作区信任四项，指出具体是哪一环失败，并给出可点击的修复入口。
+
 | 现象 | 处理 |
 |---|---|
-| `未找到 Pi CLI（需要 >= 1.5.2）` | 先 `pi --version` 确认可用。扩展自动探测的是 `~/.pi/agent/install/releases/*`（官方安装脚本布局）；如果你用 npm 全局安装，请显式指定 `pi.nodePath`（真 `node.exe`）+ `pi.cliEntryPath`（`…/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js`） |
-| 进程启动即退出 | 检查 `pi.nodePath` 是否误指 `Code.exe`；打开 `Pi: 打开诊断面板` 看 `stderr` 与 spawn 命令行 |
-| 变更视图为空 | 确认 `pi.shadowGit.enabled`；`Pi: 手动重新扫描当前工作区`；看输出面板 `Pi` 通道是否有 `git` 报错 |
+| `未找到 Pi CLI（需要 >= 1.5.2）` | 运行 `Pi: 检查运行环境`。扩展会自动探测官方安装脚本布局（`~/.pi/agent/install/releases/*`）与 npm 全局安装（`<npm root -g>/@earendil-works/pi-coding-agent`）；两者都不中时再手动指定 `pi.nodePath`（真 `node.exe`）+ `pi.cliEntryPath` |
+| 进程启动即退出 | `Pi: 检查运行环境` 会先确认 `pi.nodePath` 没有误指 `Code.exe`；仍失败时看 `Pi: 打开诊断面板` 里的 spawn 命令行、`stderr` 和候选路径列表 |
+| 改了设置没反应 | `pi.nodePath` / `pi.cliEntryPath` / `pi.model` 等会写入启动参数，改完会提示「需要重启」；点「立即重启」或执行 `Pi: 重启 Pi 进程` |
+| 变更视图为空 | 先看视图里是否有红色错误行（Git 缺失/过旧会显示）；否则 `Pi: 手动重新扫描当前工作区`，并确认 `pi.shadowGit.enabled` |
+| 聊天框能输入但没回复 | 聊天视图顶部应出现带「重启 Pi 进程 / 检查运行环境 / 打开诊断面板」按钮的横幅；按提示处理 |
 | 历史会话列表为空 | 会话文件在 `~/.pi/agent/sessions/`；已删除的文件不会列出（这是有意的，避免 Pi 把缺失路径当成新会话） |
 | 选项里没有 `@pi` | 需要 Copilot Chat 之类提供默认 chat agent 的扩展；否则直接用右侧 Pi 面板 |
 | 右侧栏打不开 | VS Code ≥ 1.96 才有 `secondarySidebar`；或手动把 Pi 图标拖到辅助栏 |
 
-诊断面板 + 输出通道 `Pi` 是排障首选，日志包含完整 spawn 命令行与 RPC 状态。
+诊断面板 + 输出通道 `Pi` 是排障首选，日志包含完整 spawn 命令行、候选路径与 RPC 状态。
 
 ---
 

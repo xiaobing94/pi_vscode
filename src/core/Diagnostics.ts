@@ -18,6 +18,8 @@ export class DiagnosticsPanel {
     private readonly config: Config,
     private readonly log: Log,
     private readonly gatewayProvider: () => RpcGateway | undefined,
+    /** Candidate launchers probed by the resolver, so a miss is explainable. */
+    private readonly candidatesProvider: () => Array<{ source: string; cli: string; exists: boolean }> = () => [],
   ) {}
 
   async show(): Promise<void> {
@@ -38,6 +40,17 @@ export class DiagnosticsPanel {
     };
   }
 
+  private candidateLines(): string {
+    const list = this.candidatesProvider() ?? [];
+    if (!list.length) return '（无）';
+    const lines: string[] = [];
+    for (const c of list) {
+      lines.push(`${c.exists ? '✓' : '✗'} ${c.source}`);
+      lines.push(`    ${c.cli}`);
+    }
+    return lines.join('\n');
+  }
+
   update(): void {
     if (!this.panel) return;
     const s = this.snapshot();
@@ -54,6 +67,7 @@ h2{margin:18px 0 6px}pre{white-space:pre-wrap;word-break:break-word;background:v
 <p>${esc(g?.error ?? '')}</p>
 ${g?.state ? `<h2>会话状态</h2><pre>${esc(JSON.stringify(g.state, null, 2))}</pre>` : ''}
 ${g?.stats ? `<h2>用量</h2><pre>${esc(JSON.stringify(g.stats, null, 2))}</pre>` : ''}
+<h2>运行时候选路径</h2><pre>${esc(this.candidateLines())}</pre>
 <h2>配置</h2><pre>${esc(JSON.stringify(s.config, null, 2))}</pre>
 <h2>日志（最近 ${s.lines.length} 条）</h2><pre>${esc(s.lines.join('\n'))}</pre>
 <h2>pi stderr</h2><pre>${esc((g?.stderr ?? []).join('\n'))}</pre></html>`;

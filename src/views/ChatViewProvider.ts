@@ -73,6 +73,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private sessionChanges: SessionChangesSummary = { files: [], added: 0, removed: 0 };
   /** Number of session files found on disk by the last history scan (-1 = unknown). */
   private historyCount = -1;
+  /** Deduplicates banner pushes when only the usage numbers changed. */
+  private lastConnectionSignature = '';
   private changesTimer: NodeJS.Timeout | undefined;
   private readonly snapshotSubscriptions = new Map<EditTracker, vscode.Disposable>();
 
@@ -497,8 +499,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     return ({ compaction_start: '正在压缩上下文…', auto_retry_start: '自动重试…', summarization_retry_scheduled: '摘要重试排队…' } as Record<string, string>)[event.type] ?? '';
   }
 
-  setStateInfo(state: RpcSessionState | undefined, stats?: { tokens?: { total?: number }; contextUsage?: { percent?: number | null }; cost?: number }, only?: vscode.WebviewView): void {
+  setStateInfo(
+    state: RpcSessionState | undefined,
+    stats?: { tokens?: { total?: number }; contextUsage?: { percent?: number | null }; cost?: number },
+    only?: vscode.WebviewView,
+    gateway?: { status: string; error?: string },
+  ): void {
     this.post({ type: 'state', state, stats, title: this.title, widgets: this.widgets }, only);
+    if (gateway) this.postConnection(gateway.status, gateway.error, only);
+  }
+
+  /**
+   * A dead or reconnecting gateway used to be invisible in the webview: the
+   * composer accepted text and nothing ever answered. Push the condition into
+   * the banner so the user is told what happened and what to do next.
+   */
+  private postConnection(status: string, error?: string, only?: vscode.WebviewView): void {
+    const signature = `${status}|${error ?? ''}`;
+    if (signature === this.lastConnectionSignature && !only) return;
+    if (!only) this.lastConnectionSignature = signature;
+    if (status === 'error' || status === 'stopped') {
+      this.post({
+        type: 'banner',
+        level: 'error',
+        text: error || (status === 'stopped' ? 'Pi 进程未运行，发送消息后会自动启动。' : 'Pi 进程不可用。'),
+        actions: [
+          { label: '重启 Pi 进程', command: 'pi.restartPi' },
+          { label: '检查运行环境', command: 'pi.checkEnvironment' },
+          { label: '打开诊断面板', command: 'pi.showDiagnostics' },
+        ],
+      }, only);
+      return;
+    }
+    if (status === 'reconnecting' || status === 'starting') {
+      this.post({ type: 'banner', level: 'warn', text: error || (status === 'starting' ? '正在启动 Pi…' : '正在重连 Pi…') }, only);
+      return;
+    }
+    this.post({ type: 'banner', text: '' }, only);
   }
 
   /** How many historical sessions live on disk; shown next to the 历史会话 button. */
@@ -540,7 +577,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     switch (msg.type) {
       case 'ready':
         reply({ type: 'replace', items: this.items, state: gw?.getState().state, config: this.config.get(), title: this.title, widgets: this.widgets, streaming: this.isStreaming });
-        this.setStateInfo(gw?.getState().state, gw?.getState().stats as any, source);
+        this.setStateInfo(gw?.getState().state, gw?.getState().stats as any, source, gw?.getState());
         this.postTasks(source);
         reply({ type: 'sessionDiff', visible: !!this.edits()?.hasSessionChanges() });
         reply({ type: 'sessionChanges', changes: this.sessionChanges });
@@ -550,7 +587,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         void this.loadModels(source);
         break;
       case 'requestState':
-        this.setStateInfo(gw?.getState().state, gw?.getState().stats as any, source);
+        this.setStateInfo(gw?.getState().state, gw?.getState().stats as any, source, gw?.getState());
         break;
       case 'submit':
         await this.submit(String(msg.text ?? ''), msg.images);
@@ -582,14 +619,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         if (!gw || !provider || !rest.length) break;
         await gw.send({ type: 'set_model', provider, modelId: rest.join('/') });
         const state = await gw.refreshState();
-        this.setStateInfo(state, gw.getState().stats as any, source);
+        this.setStateInfo(state, gw.getState().stats as any, source, gw.getState());
         await this.loadModels(source);
         break;
       }
       case 'pickThinking':
         if (!gw || !msg.text) break;
         await gw.send({ type: 'set_thinking_level', level: msg.text as any });
-        this.setStateInfo(await gw.refreshState(), gw.getState().stats as any, source);
+        this.setStateInfo(await gw.refreshState(), gw.getState().stats as any, source, gw.getState());
         break;
       case 'setModelDefault': await this.onCommand('pi.selectModel'); break;
       case 'requestCommands': await this.refreshCommands(source); break;
@@ -642,6 +679,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         await this.submit(String(msg.text ?? ''), msg.images);
         break;
       case 'command': await this.onCommand('pi.command', String(msg.text ?? '')); break;
+      // Banner action buttons execute a fixed, extension-defined command id.
+      case 'runCommand': try { await this.onCommand(String(msg.command ?? '')); } catch { /* command unavailable */ } break;
       case 'resumeSession': await this.onCommand('pi.resumeSession'); break;
       case 'newSession': await this.onCommand('pi.newSession'); break;
       case 'setModel': await this.onCommand('pi.selectModel', msg.text); break;
