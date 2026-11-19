@@ -1,6 +1,9 @@
 node_modules/
 dist/
 *.vsix
-.pi-vscode-test/
 pi-vscode-*.vsix
+.pi-vscode-test/
 dist/*.map
+.DS_Store
+Thumbs.db
+*.log

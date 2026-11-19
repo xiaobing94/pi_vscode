@@ -155,7 +155,14 @@ export async function discoverSessions(options: DiscoverOptions): Promise<Discov
     if (!info) continue;
     out.push({ ...info, sameCwd: !wanted || normalizeCwd(info.cwd) === wanted });
   }
-  // Own workspace first, then most recently modified.
-  out.sort((a, b) => Number(b.sameCwd) - Number(a.sameCwd) || b.modified - a.modified);
+  // Own workspace first, then most recently modified. `modified` alone is not a
+  // stable key: files written within the same millisecond (common on Windows and
+  // in tests) compare equal, which leaves the order dependent on readdir order.
+  // Fall back to the filename (sessions are named `<iso-timestamp>_<id>.jsonl`)
+  // and finally the full path so the result is deterministic.
+  out.sort((a, b) =>
+    Number(b.sameCwd) - Number(a.sameCwd)
+    || b.modified - a.modified
+    || b.path.localeCompare(a.path));
   return out.slice(0, limit);
 }

@@ -6,8 +6,13 @@ node_modules/**
 *.vsix
 shotcut.png
 DESIGN.md
+CONTRIBUTING.md
 esbuild.mjs
 tsconfig.json
 .vscode/**
+.gitignore
+package-lock.json
+pi-extensions/*.d.ts
 dist/*.map
 dist/testable.js
+.github/**
