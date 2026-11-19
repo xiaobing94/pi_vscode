@@ -61,7 +61,7 @@ git --version     # ≥ 2.40
 **从 Marketplace 安装**：扩展面板搜索 `Pi for VS Code`，或
 
 ```bash
-code --install-extension xiaobing94.pi-vscode
+code --install-extension xiaobing.pi-vscode
 ```
 
 **从 VSIX 安装**（离线 / 内测版本）：

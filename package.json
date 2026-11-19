@@ -3,7 +3,7 @@
   "displayName": "Pi for VS Code",
   "description": "在 VS Code 原生侧栏里使用 Pi coding agent，并用独立的影子 Git 仓库记录每次对话带来的文件改动。",
   "version": "0.2.0",
-  "publisher": "xiaobing94",
+  "publisher": "xiaobing",
   "license": "MIT",
   "repository": {
     "type": "git",

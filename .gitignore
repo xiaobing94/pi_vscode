@@ -7,3 +7,6 @@ dist/*.map
 .DS_Store
 Thumbs.db
 *.log
+
+# local screenshots
+企业微信截图_*.png
