@@ -72,6 +72,12 @@ First public release.
 
 ### Fixed
 
+- **`@pi` detection no longer hardcodes `GitHub.copilot-chat`**. The native-chat
+  command now reads `chatParticipants` / `chatAgents` contributions from the
+  installed extensions, so any chat agent works (Copilot stable/insiders,
+  ChatGPT/Codex, vendor forks). A disabled `chat.disableAIFeatures` and a host
+  without the Chat API are reported explicitly, and when no agent exists the
+  command explains why instead of silently redirecting to the Pi panel.
 - **Silent gateway failures**: a dead or reconnecting Pi process is now shown as
   a banner in the chat view with *Restart Pi* / *Check environment* / *Open
   diagnostics* actions, instead of the composer accepting input that never gets

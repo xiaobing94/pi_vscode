@@ -13,3 +13,4 @@ export { discoverSessions, readSessionInfo, normalizeCwd, preview } from './sess
 export { RpcGateway } from './pi/RpcGateway';
 export { EditTracker, reversePatch, countLines, countPatch } from './changes/EditTracker';
 export { RuntimeProbe } from './core/RuntimeProbe';
+export { probeChatHost, chatAgentExtensions } from './views/NativeChat';

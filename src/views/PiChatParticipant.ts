@@ -24,12 +24,17 @@ export class PiChatParticipant implements vscode.Disposable {
   }) {}
 
   register(): vscode.Disposable {
+    // The Chat API landed in 1.90; the manifest still activates the extension on
+    // older hosts through the views, so a missing API must not throw.
     const chat = (vscode as any).chat;
-    if (!chat?.createChatParticipant) {
+    if (typeof chat?.createChatParticipant !== 'function') {
       this.deps.log.info('vscode.chat API unavailable; native chat participant not registered');
       return new vscode.Disposable(() => {});
     }
-    const participant: vscode.ChatParticipant = chat.createChatParticipant(PiChatParticipant.id, (req: vscode.ChatRequest, ctx: vscode.ChatContext, stream: vscode.ChatResponseStream, token: vscode.CancellationToken) => this.handle(req, ctx, stream, token));
+    const participant: vscode.ChatParticipant = chat.createChatParticipant(
+      PiChatParticipant.id,
+      (req: vscode.ChatRequest, ctx: vscode.ChatContext, stream: vscode.ChatResponseStream, token: vscode.CancellationToken) => this.handle(req, ctx, stream, token),
+    );
     participant.iconPath = vscode.Uri.joinPath(this.deps.extensionUri, 'media', 'pi.png');
     participant.followupProvider = {
       provideFollowups: (result: vscode.ChatResult) => {
@@ -37,6 +42,11 @@ export class PiChatParticipant implements vscode.Disposable {
         return m.files ? [{ prompt: '请检查刚才的改动是否有问题', label: '审查本轮改动' }] : [];
       },
     };
+    if ('onDidReceiveFeedback' in participant) {
+      // No-op unless someone wires analytics; keeps the event from being an
+      // unhandled surface that future VS Code versions may require.
+      this.disposables.push((participant as any).onDidReceiveFeedback?.(() => {}) ?? new vscode.Disposable(() => {}));
+    }
     this.disposables.push(participant);
     return participant;
   }

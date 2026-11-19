@@ -24,6 +24,7 @@ import { DiagnosticsPanel } from '../core/Diagnostics';
 import { EditTracker } from '../changes/EditTracker';
 import { PiChatParticipant } from '../views/PiChatParticipant';
 import { RuntimeProbe } from './RuntimeProbe';
+import { probeCurrentHost } from '../views/NativeChat';
 
 export interface ControllerDeps {
   context: vscode.ExtensionContext;
@@ -130,19 +131,48 @@ export class AppController {  // async dispose; see dispose() below
         await vscode.commands.executeCommand('pi.chat.focusSecondaryView');
       }),
       cmd('pi.chat.askInNativeChat', async () => {
-        // Pre-fill @pi in VS Code's built-in Chat view. That view only accepts input
-        // when an extension contributes a default chat agent (Copilot Chat / ChatGPT).
-        // Without one it stays on the welcome page, so use the right-hand Pi view instead.
-        // Only Copilot Chat contributes a default chat agent; a chat session
-        // provider (e.g. ChatGPT/Codex) still leaves the built-in Chat on its
-        // welcome page, so it cannot host @pi.
-        const hasChatHost = !!vscode.extensions.getExtension('GitHub.copilot-chat');
-        if (hasChatHost) {
+        // Pre-fill @pi in VS Code's built-in Chat view.
+        //
+        // The built-in Chat only accepts input once some extension contributes a
+        // chat agent, so the probe looks at declared contributions rather than a
+        // hardcoded extension id (Copilot stable/insiders/enterprise differ, and
+        // an installed-but-disabled Copilot is invisible to an id check).
+        //
+        // If we cannot prove the view works we no longer silently redirect to the
+        // Pi panel: the user asked for the native chat, so tell them why it will
+        // not work here and let them retry after installing an agent.
+        const declaredParticipants = (context.extension.packageJSON?.contributes?.chatParticipants ?? [])
+          .map((p: any) => String(p?.id ?? ''))
+          .filter(Boolean);
+        const probe = probeCurrentHost(context.extension.id, declaredParticipants);
+        const openNativeChat = async (): Promise<boolean> => {
           try {
             await vscode.commands.executeCommand('workbench.action.chat.open', { query: '@pi ', isPartialQuery: true });
-            return;
-          } catch { /* fall through to the Pi view */ }
+            return true;
+          } catch (err) {
+            log.debug(`workbench.action.chat.open failed: ${String(err)}`);
+            return false;
+          }
+        };
+
+        if (probe.available) {
+          if (await openNativeChat()) return;
+          void vscode.window.showWarningMessage('Pi: 无法打开内置 Chat 视图，已改用右侧 Pi 面板。');
+          await vscode.commands.executeCommand('pi.chat.focusSecondary');
+          return;
         }
+
+        log.info(`native chat unavailable: ${probe.reason ?? 'unknown'} (agents=${probe.otherAgents.join(',') || 'none'})`);
+        const actions = [
+          probe.chatDisabled ? '修改设置' : '仍尝试打开',
+          '使用右侧 Pi 面板',
+        ];
+        const choice = await vscode.window.showInformationMessage(`Pi: ${probe.reason}`, ...actions);
+        if (choice === '修改设置') {
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'chat.disableAIFeatures');
+          return;
+        }
+        if (choice === '仍尝试打开' && await openNativeChat()) return;
         await vscode.commands.executeCommand('pi.chat.focusSecondary');
       }),
       cmd('pi.showDiagnostics', () => diagnostics.show()),

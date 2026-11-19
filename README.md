@@ -116,7 +116,7 @@ code --install-extension pi-vscode-0.2.0.vsix
 - MCP 服务列表面板、子代理（subagent）树视图、诊断面板
 
 ### 其他入口
-- `@pi` chat participant（需要安装 Copilot Chat 提供默认 chat agent；否则用右侧 Pi 面板）
+- `@pi` chat participant：内置 Chat 视图需要**任意**提供 chat agent 的扩展（Copilot Chat、ChatGPT/Codex 等均可，扩展按 manifest 的 `chatParticipants` 贡献自动识别，不绑定具体扩展）；没有任何 agent 时 `Pi: 在原生 Chat 里选择 @pi` 会说明原因并提供「仍尝试打开 / 使用右侧 Pi 面板」两个选项
 - `/bug` 报告向导
 
 ---
@@ -223,7 +223,7 @@ hash-object -w  →  update-index -z --index-info  →  write-tree
 | 变更视图为空 | 先看视图里是否有红色错误行（Git 缺失/过旧会显示）；否则 `Pi: 手动重新扫描当前工作区`，并确认 `pi.shadowGit.enabled` |
 | 聊天框能输入但没回复 | 聊天视图顶部应出现带「重启 Pi 进程 / 检查运行环境 / 打开诊断面板」按钮的横幅；按提示处理 |
 | 历史会话列表为空 | 会话文件在 `~/.pi/agent/sessions/`；已删除的文件不会列出（这是有意的，避免 Pi 把缺失路径当成新会话） |
-| 选项里没有 `@pi` | 需要 Copilot Chat 之类提供默认 chat agent 的扩展；否则直接用右侧 Pi 面板 |
+| 选项里没有 `@pi` | 内置 Chat 需要**任一**提供 chat agent 的扩展（不限于 Copilot Chat）。若完全没有，`Pi: 在原生 Chat 里选择 @pi` 会提示原因；也可检查设置 `chat.disableAIFeatures` 是否关闭了内置 Chat |
 | 右侧栏打不开 | VS Code ≥ 1.96 才有 `secondarySidebar`；或手动把 Pi 图标拖到辅助栏 |
 
 诊断面板 + 输出通道 `Pi` 是排障首选，日志包含完整 spawn 命令行、候选路径与 RPC 状态。
