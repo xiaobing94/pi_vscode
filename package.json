@@ -1,6 +1,6 @@
 {
-  "name": "pi-vscode",
-  "displayName": "Pi for VS Code",
+  "name": "pi-shadow-agent",
+  "displayName": "Pi — Agent with Shadow Git",
   "description": "在 VS Code 原生侧栏里使用 Pi coding agent，并用独立的影子 Git 仓库记录每次对话带来的文件改动。",
   "version": "0.2.0",
   "publisher": "xiaobing",
@@ -54,7 +54,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/integration/*.mjs",
     "test:integration": "npm run test",
-    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies --baseContentUrl . --baseImagesUrl . --out pi-vscode-0.2.0.vsix",
+    "package": "npm run build && npx --yes @vscode/vsce package --no-dependencies --baseContentUrl . --baseImagesUrl . --out pi-shadow-agent-0.2.0.vsix",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('media/chat/main.js',{force:true})\""
   },
   "contributes": {

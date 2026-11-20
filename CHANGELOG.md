@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Pi for VS Code** are documented here.
+All notable changes to **Pi — Agent with Shadow Git** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and this
 project adheres to [Semantic Versioning](https://semver.org/).
 
@@ -18,6 +18,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Marketplace identity**: the extension `name` is now `pi-shadow-agent` and the
+  display name is `Pi — Agent with Shadow Git`, so it can be published next to
+  the existing `pi-vscode` / `Pi for VS Code` listings. Internal ids (view,
+  view container and chat participant ids) are unchanged, so the VSIX upgrade
+  path and saved user state still work.
 - `pi.multiSession` is deprecated; parallel sessions are always available.
 - Webview messages carry the tab they came from, so abort / queue / diff
   actions always hit the right session even if the tab changed meanwhile.

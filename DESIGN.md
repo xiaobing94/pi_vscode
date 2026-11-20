@@ -1,4 +1,4 @@
-# Pi for VS Code — 设计文档
+# Pi — Agent with Shadow Git — 设计文档
 
 | 项 | 值 |
 |---|---|

@@ -32,10 +32,10 @@ jobs:
         run: npm test
 
       - name: Verify the extension packages cleanly
-        run: npx --yes @vscode/vsce package --no-dependencies --out pi-vscode.vsix
+        run: npx --yes @vscode/vsce package --no-dependencies --out pi-shadow-agent.vsix
 
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.os }}
-          path: pi-vscode.vsix
+          path: pi-shadow-agent.vsix
           if-no-files-found: error

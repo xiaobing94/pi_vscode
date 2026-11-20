@@ -1,4 +1,4 @@
-# Pi for VS Code
+# Pi — Agent with Shadow Git
 
 **在 VS Code 原生侧栏里使用 [Pi](https://pi.dev) coding agent，并用独立的影子 Git 仓库逐轮记录 AI 造成的文件改动。**
 
@@ -58,16 +58,16 @@ git --version     # ≥ 2.40
 
 ## 安装
 
-**从 Marketplace 安装**：扩展面板搜索 `Pi for VS Code`，或
+**从 Marketplace 安装**：扩展面板搜索 `Pi — Agent with Shadow Git`，或
 
 ```bash
-code --install-extension xiaobing.pi-vscode
+code --install-extension xiaobing.pi-shadow-agent
 ```
 
 **从 VSIX 安装**（离线 / 内测版本）：
 
 ```bash
-code --install-extension pi-vscode-0.2.0.vsix
+code --install-extension pi-shadow-agent-0.2.0.vsix
 ```
 
 安装后重新加载窗口即可。
@@ -241,7 +241,7 @@ npm run build          # esbuild → dist/extension.js、dist/chat.js
 npm run watch          # 增量构建
 npm run typecheck      # tsc --noEmit
 npm test               # 构建 + node --test 集成测试
-npm run package        # 产出 pi-vscode-0.2.0.vsix
+npm run package        # 产出 pi-shadow-agent-0.2.0.vsix
 ```
 
 调试：VS Code 打开本目录按 `F5`（`.vscode/launch.json` 已配好扩展开发宿主）。

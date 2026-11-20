@@ -51,7 +51,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (!vscode.workspace.isTrusted) {
     void vscode.window.showWarningMessage('Pi: 工作区未授信，未启动任何 Pi 进程。信任工作区后将自动启动。');
   }
-  log.info('Pi for VS Code activated');
+  log.info('Pi — Agent with Shadow Git activated');
 }
 
 export async function deactivate(): Promise<void> {
