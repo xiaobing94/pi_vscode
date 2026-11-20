@@ -6,6 +6,23 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Parallel sessions**: the chat view gets a tab strip; every tab is its own
+  `pi --mode rpc` process, so several conversations run at the same time.
+  Background tabs keep streaming off-screen (spinner while running, dot when
+  finished) and are shown instantly when selected. Open with the session
+  bar's 「⧉ 并行」, the tab strip's ＋, `/parallel`, `Ctrl+Alt+T` or
+  `Pi: 新开并行会话`; resume a history session in a new tab from the
+  「Pi 会话」 context menu. A session file is never opened by two tabs.
+
+### Changed
+
+- `pi.multiSession` is deprecated; parallel sessions are always available.
+- Webview messages carry the tab they came from, so abort / queue / diff
+  actions always hit the right session even if the tab changed meanwhile.
+- Concurrent `RpcGateway.start()` calls share one spawn.
+
 ## [0.2.0] - 2026-11-19
 
 First public release.

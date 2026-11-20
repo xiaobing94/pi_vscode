@@ -10,6 +10,7 @@ export class StatusBar implements vscode.Disposable {
   private readonly config: Config;
   private readonly log: Log;
   private readonly snapshots: () => SnapshotService | undefined;
+  private readonly gatewayState: () => any;
   private readonly disposables: vscode.Disposable[] = [];
   private warnedExternal = false;
 
@@ -17,6 +18,7 @@ export class StatusBar implements vscode.Disposable {
     this.config = args.config;
     this.log = args.log;
     this.snapshots = args.snapshots;
+    this.gatewayState = args.gatewayState;
     this.changes = vscode.window.createStatusBarItem('pi.changes', vscode.StatusBarAlignment.Left, 40);
     this.changes.command = 'pi.openChangesOverview';
     this.changes.name = 'Pi 变更';
@@ -26,13 +28,26 @@ export class StatusBar implements vscode.Disposable {
     this.refresh();
   }
 
-  /** Gateway comes online after the status bar is constructed; bind its state updates then. */
-  bindGateway(gateway: { onDidChangeState(listener: (s: any) => void): vscode.Disposable; getState(): any }): void {
-    this.disposables.push(gateway.onDidChangeState(() => this.updateUsage(gateway.getState())));
-    this.updateUsage(gateway.getState());
+  /**
+   * Gateway comes online after the status bar is constructed; bind its state updates then.
+   * With parallel sessions only the active tab's gateway drives the usage item.
+   * Returns a disposable so a closed tab stops updating the status bar.
+   */
+  bindGateway(gateway: { onDidChangeState(listener: (s: any) => void): vscode.Disposable; getState(): any }): vscode.Disposable {
+    const sub = gateway.onDidChangeState(() => { if (this.isActiveGateway(gateway)) this.updateUsage(gateway.getState()); });
+    this.disposables.push(sub);
+    if (this.isActiveGateway(gateway)) this.updateUsage(gateway.getState());
+    return sub;
+  }
+
+  private isActiveGateway(gateway: unknown): boolean {
+    const active = this.gatewayState();
+    return !active || active === gateway;
   }
 
   refresh(): void {
+    const gw = this.gatewayState();
+    if (gw?.getState) this.updateUsage(gw.getState());
     const service = this.snapshots();
     if (!service || !this.config.get().shadowGit.enabled) { this.changes.hide(); return; }
     const changes = service.getChanges();

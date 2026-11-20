@@ -177,20 +177,34 @@ export class AppController {  // async dispose; see dispose() below
       }),
       cmd('pi.showDiagnostics', () => diagnostics.show()),
       cmd('pi.switchActiveSession', async () => {
-        const all = [...this.bindings.values()];
-        const picks: Array<{ label: string; description?: string; key?: string; create?: boolean }> = all.map((b) => ({
-          label: `${b.binding.folder.name} · ${b.gateway.getState().state?.sessionName ?? b.gateway.getState().state?.sessionId?.slice(0, 8) ?? '未就绪'}`,
-          description: b.binding.folder.uri.fsPath, key: b.key,
-        }));
-        if (this.deps.config.get().multiSession) {
-          picks.push({ label: '$(add) 新建并行会话…', description: '为当前工作区再启动一个独立 Pi 会话', create: true });
-        }
-        const pick = await vscode.window.showQuickPick(picks, { title: 'Pi: 切换活动会话（P2 多会话）' });
+        const infos = new Map(chat.sessionInfos().map((i) => [i.key, i]));
+        const picks: Array<{ label: string; description?: string; detail?: string; key?: string; create?: boolean }> = [...this.bindings.values()].map((b) => {
+          const info = infos.get(b.key);
+          const state = b.gateway.getState();
+          return {
+            label: `${b.key === this.activeKey ? '$(check) ' : ''}${info?.streaming ? '$(loading~spin) ' : ''}${info?.label ?? b.key}`,
+            description: [this.deps.registry.all().length > 1 ? b.binding.folder.name : '', info?.streaming ? '运行中' : state.status === 'ready' ? '空闲' : state.status].filter(Boolean).join(' · '),
+            detail: state.state?.sessionFile,
+            key: b.key,
+          };
+        });
+        picks.push({ label: '$(add) 新开并行会话', description: '独立 Pi 进程，可与其它会话同时运行', create: true });
+        const pick = await vscode.window.showQuickPick(picks, { title: 'Pi: 切换会话标签', matchOnDetail: true });
         if (!pick) return;
         if (pick.create) { await this.createParallelSession(); return; }
-        if (all.length < 2 && !pick.create) { void vscode.window.showInformationMessage('Pi: 当前只有一个活动会话；开启 pi.multiSession 可新建并行会话。'); }
         if (pick.key) await this.setActive(pick.key);
       }),
+      cmd('pi.newParallelSession', async (arg?: unknown) => {
+        const sessionPath = typeof arg === 'string' && arg.trim() ? arg.trim() : (arg as any)?.sessionPath;
+        await this.createParallelSession(typeof sessionPath === 'string' ? sessionPath : undefined);
+      }),
+      cmd('pi.openSessionInNewTab', async (node?: any) => {
+        const p = typeof node === 'string' ? node : node?.sessionPath ?? await this.sessionTree.pickRecent();
+        if (p) await this.createParallelSession(p);
+      }),
+      cmd('pi.chat.switchTab', async (key?: string) => { if (typeof key === 'string') await this.setActive(key); }),
+      cmd('pi.chat.closeTab', async (key?: string) => { await this.closeSession(typeof key === 'string' ? key : this.activeKey); }),
+      cmd('pi.closeParallelSession', async () => { await this.closeSession(this.activeKey); }),
       cmd('pi.newSession', async () => {
         const data = await gw()?.send<{ cancelled: boolean }>({ type: 'new_session' });
         if (data && !data.cancelled) await this.onSessionChanged();
@@ -287,7 +301,7 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.abort', () => gw()?.send({ type: 'abort' })),
       cmd('pi.clearQueue', async () => {
         const data = await gw()?.send<{ steering: string[]; followUp: string[] }>({ type: 'clear_queue' });
-        if (data) chat.setEditorText([...data.steering, ...data.followUp].join('\n'));
+        if (data) chat.setEditorText([...data.steering, ...data.followUp].join('\n'), false, this.activeKey);
         await gw()?.send({ type: 'abort' });
       }),
       cmd('pi.selectModel', async (query?: string) => {
@@ -320,7 +334,7 @@ export class AppController {  // async dispose; see dispose() below
           });
           const state = await gateway.refreshState();
           void gateway.refreshStats();
-          chat.setStateInfo(state, gateway.getState().stats as any);
+          chat.setStateInfo(state, gateway.getState().stats as any, undefined, undefined, this.activeKey);
           void vscode.window.showInformationMessage(`Pi: 已切换到 ${state?.model?.provider ?? only.provider}/${state?.model?.id ?? only.id}`);
           return;
         }
@@ -343,7 +357,7 @@ export class AppController {  // async dispose; see dispose() below
         }
         const state = await gateway.refreshState();
         void gateway.refreshStats();
-        chat.setStateInfo(state, gateway.getState().stats as any);
+        chat.setStateInfo(state, gateway.getState().stats as any, undefined, undefined, this.activeKey);
         const shown = `${state?.model?.provider ?? pick.model.provider}/${state?.model?.id ?? pick.model.id}`;
         const remember = await vscode.window.showInformationMessage(
           `Pi: 已切换到 ${shown}（仅本会话生效）`,
@@ -366,13 +380,13 @@ export class AppController {  // async dispose; see dispose() below
         const wanted = typeof query === 'string' ? query.trim().toLowerCase() : '';
         if (wanted && levels.includes(wanted)) {
           await gateway.send({ type: 'set_thinking_level', level: wanted as any });
-          chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any);
+          chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any, undefined, undefined, this.activeKey);
           return;
         }
         const pick = await vscode.window.showQuickPick(levels.map((l) => ({ label: l === current ? `${l} · 当前` : l, level: l as any })), { title: 'Pi: 选择思考级别' });
         if (!pick) return;
         await gateway.send({ type: 'set_thinking_level', level: pick.level });
-        chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any);
+        chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any, undefined, undefined, this.activeKey);
       }),
       cmd('pi.setSteeringMode', async () => {
         const p = await vscode.window.showQuickPick(['all', 'one-at-a-time'], { title: 'Pi: steer 模式' });
@@ -385,7 +399,7 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.showStatus', async () => {
         const stats = await gw()?.refreshStats();
         const state = gw()?.getState().state;
-        chat.setStateInfo(state, stats as any);
+        chat.setStateInfo(state, stats as any, undefined, undefined, this.activeKey);
         if (stats) void vscode.window.showInformationMessage(`Pi: ${state?.model?.id ?? '-'} · 上下文 ${stats.contextUsage?.percent ?? '?'}% · ${stats.tokens?.total ?? 0} tokens · $${(stats.cost ?? 0).toFixed(3)}`);
       }),
       cmd('pi.checkEnvironment', async () => { await this.probe.show(); }),
@@ -426,8 +440,11 @@ export class AppController {  // async dispose; see dispose() below
 
     this.disposables.push(vscode.window.onDidChangeActiveTextEditor(() => {
       const uri = vscode.window.activeTextEditor?.document.uri;
-      const b = uri ? this.deps.registry.forUri(uri) : undefined;
-      if (b && b.repoKey !== this.activeKey) this.setActive(b.repoKey);
+      const binding = uri ? this.deps.registry.forUri(uri) : undefined;
+      if (!binding || this.active()?.binding.repoKey === binding.repoKey) return;
+      // Several tabs may belong to that folder: pick its first one; never switch tabs within a folder.
+      const target = [...this.bindings.values()].find((b) => b.binding.repoKey === binding.repoKey);
+      if (target) void this.setActive(target.key);
     }));
 
     // Internal aliases: reveal the view container and focus only that view's composer.
@@ -456,89 +473,156 @@ export class AppController {  // async dispose; see dispose() below
     return found[0];
   }
 
-  /** P2: start one more independent RPC process/session for the active folder. */
-  private async createParallelSession(): Promise<void> {
-    const { context, config, log, registry, resolver, chat, statusBar, diagnostics } = this.deps;
-    const base = this.active();
-    if (!base) return;
-    const key = `${base.binding.repoKey}-s${Date.now().toString(36)}`;
+  /**
+   * One bundle = one Pi RPC process = one chat tab. Bundles of the same folder
+   * share the folder's shadow repo (refs are per Pi session id, so they never
+   * collide) but have their own IPC dir, collector and edit tracker.
+   */
+  private async createBundle(binding: WorkspaceBinding, key: string): Promise<Bundle> {
+    const { context, config, log, registry, resolver, chat, statusBar } = this.deps;
+    await registry.ensureStorage(binding);
     const prepared = await new ExtensionIpc(config, log).prepare(context.globalStorageUri, key);
     const mapper = new PathMapper(registry, config, log);
     const collector = new Collector({ mapper, config, log, registry, ipcDir: prepared.dir });
     const snapshots = new SnapshotService({
-      binding: base.binding, log, config, registry, mapper, collector, ipcDir: prepared.dir,
+      binding, log, config, registry, mapper, collector, ipcDir: prepared.dir,
       version: context.extension.packageJSON.version ?? '0.1.0',
     });
     const gateway = new RpcGateway({
-      config, log, resolver, cwd: base.binding.folder.uri.fsPath,
+      config, log, resolver, cwd: binding.folder.uri.fsPath,
       uiHooks: {
-        setWidget: (_k, lines) => chat.setWidgetLines(lines),
-        setTitle: (t) => chat.setTitle(t),
-        setEditorText: (t, append) => chat.setEditorText(t, append),
-        setStatus: (k, t) => log.debug(`extension status ${k}: ${t ?? '(cleared)'}`),
+        setWidget: (_k, lines) => chat.setWidgetLines(lines, key),
+        setTitle: (title) => chat.setTitle(title, key),
+        setEditorText: (text, append) => chat.setEditorText(text, append, key),
+        setStatus: (k, text) => log.debug(`extension status ${k}: ${text ?? '(cleared)'}`),
       },
       ipcEnv: prepared.env,
     });
+    const edits = new EditTracker({ cwd: binding.folder.uri.fsPath, ipcDir: prepared.dir, log });
     const bundle: Bundle = {
-      key, binding: base.binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir,
-      edits: new EditTracker({ cwd: base.binding.folder.uri.fsPath, ipcDir: prepared.dir, log }),
-      tui: new TuiLauncher({
-        config, log, resolver, gateway: () => gateway,
-        ipcDir: prepared.dir, ipcSessionId: () => snapshots.currentSessionId || key,
-        onReturn: async () => { void chat.replay(await gateway.getMessages().catch(() => [])); },
-      }),
+      key, binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir, edits, disposables: [],
+      tui: undefined as unknown as TuiLauncher,
     };
+    bundle.tui = new TuiLauncher({
+      config, log, resolver, gateway: () => gateway,
+      ipcDir: prepared.dir, ipcSessionId: () => snapshots.currentSessionId || key,
+      onReturn: async () => {
+        const state = await gateway.refreshState();
+        if (state?.sessionFile) void gateway.send({ type: 'switch_session', sessionPath: state.sessionFile }).catch(() => {});
+        if (this.active() === bundle) await this.onSessionChanged();
+        else await this.replayChat(bundle);
+        await snapshots.initialize();
+      },
+    });
     this.bindings.set(key, bundle);
-    statusBar.bindGateway(gateway);
-    await this.registerViews(bundle, diagnostics, statusBar);
+    // Register the tab before the process starts so its first events land in it.
+    chat.addSession(key, {
+      gateway: () => bundle.gateway, edits: () => bundle.edits, snapshots: () => bundle.snapshots,
+      folder: binding.folder.name,
+    });
+    bundle.disposables.push(statusBar.bindGateway(gateway));
+    await this.registerViews(bundle, this.deps.diagnostics, statusBar);
     this.subscribe(bundle);
-    await gateway.start();
+    return bundle;
+  }
+
+  /**
+   * Open another chat tab backed by its own Pi process, so it can run at the
+   * same time as the others. `sessionPath` resumes a history session in it.
+   */
+  private async createParallelSession(sessionPath?: string): Promise<void> {
+    const { registry, log } = this.deps;
+    let binding = this.active()?.binding;
+    if (registry.all().length > 1) {
+      const pick = await vscode.window.showQuickPick(
+        registry.all().map((b) => ({ label: b.folder.name, description: b.folder.uri.fsPath, binding: b })),
+        { title: 'Pi: 并行会话在哪个工作区文件夹中运行？' },
+      );
+      if (!pick) return;
+      binding = pick.binding;
+    }
+    if (!binding) { void vscode.window.showWarningMessage('Pi: 没有可用的工作区文件夹。'); return; }
+    if (sessionPath) {
+      // Two Pi processes appending to one session file would corrupt it.
+      const open = this.bundleForSessionFile(sessionPath);
+      if (open) { await this.setActive(open.key); return; }
+      try { await vscode.workspace.fs.stat(vscode.Uri.file(sessionPath)); }
+      catch { void vscode.window.showWarningMessage(`Pi: 会话文件已不存在，无法恢复：${sessionPath}`); return; }
+    }
+    const key = `${binding.repoKey}-s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const bundle = await this.createBundle(binding, key);
     await this.setActive(key);
-    void vscode.window.showInformationMessage(`Pi: 已新建并行会话 ${key}`);
+    this.deps.chat.focus();
+    const ok = await bundle.gateway.start();
+    if (!ok) return;
+    if (sessionPath) {
+      try {
+        const data = await bundle.gateway.send<{ cancelled: boolean }>({ type: 'switch_session', sessionPath });
+        if (!data?.cancelled) {
+          if (this.active() === bundle) await this.onSessionChanged();
+          else await this.replayChat(bundle);
+        }
+      } catch (err) {
+        log.error('switch_session in new tab failed', err);
+        void vscode.window.showErrorMessage(`Pi: 在新标签中恢复会话失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (this.active() === bundle) {
+      await this.setActive(key);
+    }
+  }
+
+  private bundleForSessionFile(sessionPath: string): Bundle | undefined {
+    const norm = (p: string) => (process.platform === 'win32' ? p.replace(/\//g, '\\').toLowerCase() : p);
+    const target = norm(sessionPath);
+    return [...this.bindings.values()].find((b) => {
+      const f = b.gateway.getState().state?.sessionFile;
+      return !!f && norm(f) === target;
+    });
+  }
+
+  /** Close a tab: stops its Pi process. The last tab cannot be closed. */
+  private async closeSession(key: string): Promise<void> {
+    const b = this.bindings.get(key);
+    if (!b) return;
+    if (this.bindings.size <= 1) {
+      void vscode.window.showInformationMessage('Pi: 这是最后一个会话标签，无法关闭。可用「新建」开始新的对话。');
+      return;
+    }
+    if (this.deps.chat.isSessionStreaming(key)) {
+      const ok = await vscode.window.showWarningMessage('Pi: 该会话正在运行，关闭标签会终止它。', { modal: true }, '终止并关闭');
+      if (ok !== '终止并关闭') return;
+      await b.gateway.send({ type: 'abort' }, 3000).catch(() => {});
+    }
+    await this.disposeBundle(b);
+    if (!this.bindings.has(this.activeKey)) {
+      const next = this.deps.chat.activeSessionKey;
+      await this.setActive(this.bindings.has(next) ? next : this.bindings.keys().next().value!);
+    }
+  }
+
+  private async disposeBundle(b: Bundle): Promise<void> {
+    this.bindings.delete(b.key);
+    this.deps.chat.removeSession(b.key);
+    for (const d of b.disposables) d.dispose();
+    b.collector.dispose();
+    b.gateway.dispose();
+    await b.snapshots.flush().catch(() => {});
+    b.snapshots.dispose();
+    b.edits.dispose();
+    this.deps.statusBar.refresh();
   }
 
   private async rebuild(): Promise<void> {
-    const { context, config, log, registry, resolver, chat, statusBar, diagnostics } = this.deps;
+    const { registry } = this.deps;
+    const live = new Set(registry.all().map((b) => b.repoKey));
+    // Folders removed from the workspace: stop their sessions.
+    for (const b of [...this.bindings.values()]) if (!live.has(b.binding.repoKey)) await this.disposeBundle(b);
     for (const binding of registry.all()) {
-      if (this.bindings.has(binding.repoKey)) continue;
-      await registry.ensureStorage(binding);
-      const ipc = new ExtensionIpc(config, log);
-      const prepared = await ipc.prepare(context.globalStorageUri, binding.repoKey);
-      const mapper = new PathMapper(registry, config, log);
-      const collector = new Collector({ mapper, config, log, registry, ipcDir: prepared.dir });
-      const snapshots = new SnapshotService({
-        binding, log, config, registry, mapper, collector, ipcDir: prepared.dir,
-        version: context.extension.packageJSON.version ?? '0.1.0',
-      });
-      const gateway = new RpcGateway({
-        config, log, resolver, cwd: binding.folder.uri.fsPath,
-        uiHooks: {
-          setWidget: (_key, lines) => chat.setWidgetLines(lines),
-          setTitle: (title) => chat.setTitle(title),
-          setEditorText: (text, append) => chat.setEditorText(text, append),
-          setStatus: (key, text) => log.debug(`extension status ${key}: ${text ?? '(cleared)'}`),
-        },
-        ipcEnv: prepared.env,
-        sessionId: undefined,
-      });
-      const bundle: Bundle = { key: binding.repoKey, binding, gateway, collector, mapper, snapshots, ipcDir: prepared.dir, tui: undefined as any, edits: new EditTracker({ cwd: binding.folder.uri.fsPath, ipcDir: prepared.dir, log }) };
-      bundle.tui = new TuiLauncher({
-        config, log, resolver, gateway: () => this.active()?.gateway,
-        ipcDir: prepared.dir, ipcSessionId: () => snapshots.currentSessionId || binding.repoKey,
-        onReturn: async () => {
-          const state = await gateway.refreshState();
-          if (state?.sessionFile) void gateway.send({ type: 'switch_session', sessionPath: state.sessionFile }).catch(() => {});
-          await this.onSessionChanged();
-          await snapshots.initialize();
-        },
-      });
-      this.bindings.set(bundle.key, bundle);
-      statusBar.bindGateway(gateway);
-      await this.registerViews(bundle, diagnostics, statusBar);
-      this.subscribe(bundle);
-      await gateway.start();
+      if ([...this.bindings.values()].some((b) => b.binding.repoKey === binding.repoKey)) continue;
+      const bundle = await this.createBundle(binding, binding.repoKey);
+      await bundle.gateway.start();
     }
-    if (!this.activeKey && this.bindings.size) this.setActive(this.bindings.keys().next().value!);
+    if (!this.bindings.has(this.activeKey) && this.bindings.size) await this.setActive(this.bindings.keys().next().value!);
   }
 
   private async registerViews(bundle: Bundle, diagnostics: DiagnosticsPanel, statusBar: StatusBar): Promise<void> {
@@ -561,15 +645,16 @@ export class AppController {  // async dispose; see dispose() below
 
   private subscribe(bundle: Bundle): void {
     const { chat, statusBar, diagnostics, config, log } = this.deps;
-    this.disposables.push(
-      bundle.edits,
-      bundle.edits.onDidRecordTool((t) => { if (this.active() === bundle) chat.onToolRecorded(t.toolCallId); }),
-      bundle.edits.onDidSettleTurn((s) => { if (this.active() === bundle) chat.onTurnSettled(s); }),
+    const key = bundle.key;
+    const isActive = () => this.active() === bundle;
+    bundle.disposables.push(
+      bundle.edits.onDidRecordTool((t) => chat.onToolRecorded(t.toolCallId, key)),
+      bundle.edits.onDidSettleTurn((s) => chat.onTurnSettled(s, key)),
     );
-    if (this.active() === bundle) chat.bindEdits(bundle.edits);
-    this.disposables.push(bundle.gateway.onEvent((event) => {
+    chat.bindEdits(bundle.edits, key);
+    bundle.disposables.push(bundle.gateway.onEvent((event) => {
       bundle.edits.onEvent(event);
-      if (this.active() === bundle) chat.onEvent(event);
+      chat.onEvent(event, key);
       bundle.collector.onEvent(event);
       bundle.snapshots.onEvent(event);
       switch (event.type) {
@@ -594,9 +679,9 @@ export class AppController {  // async dispose; see dispose() below
             await bundle.edits.settle(!!event.aborted, shadow);
             const stats = await bundle.gateway.refreshStats();
             const state = await bundle.gateway.refreshState();
-            chat.setStateInfo(state, stats as any);
+            chat.setStateInfo(state, stats as any, undefined, undefined, key);
             statusBar.refresh();
-            await this.sessionTree.refresh(state);
+            if (isActive()) await this.sessionTree.refresh(state);
           })().catch((err) => log.error('settled snapshot failed', err));
           break;
         }
@@ -608,7 +693,7 @@ export class AppController {  // async dispose; see dispose() below
           break;
         }
         case 'session_info_changed':
-          void this.sessionTree.refresh(bundle.gateway.getState().state);
+          if (isActive()) void this.sessionTree.refresh(bundle.gateway.getState().state);
           break;
         case 'extension_error':
           diagnostics.update();
@@ -617,15 +702,19 @@ export class AppController {  // async dispose; see dispose() below
           break;
       }
     }));
-    this.disposables.push(bundle.gateway.onDidChangeState((s) => {
-      chat.setStateInfo(s.state, s.stats as any, undefined, s);
-      diagnostics.update();
-      if (s.status === 'ready' && s.state) {
+    let wasReady = false;
+    bundle.disposables.push(bundle.gateway.onDidChangeState((s) => {
+      chat.setStateInfo(s.state, s.stats as any, undefined, s, key);
+      if (isActive()) diagnostics.update();
+      // Replay only on the transition into `ready` (start / reconnect), not on every stats refresh.
+      const ready = s.status === 'ready' && !!s.state;
+      if (ready && !wasReady) {
         bundle.snapshots.bindSession(s.state);
         // initialize() already queues a base snapshot; avoid a second racer.
-        void bundle.gateway.getMessages().then((msgs) => chat.replay(msgs)).catch(() => {});
-        void this.sessionTree.refresh(s.state);
+        void bundle.gateway.getMessages().then((msgs) => chat.replay(msgs, key)).catch(() => {});
+        if (isActive()) void this.sessionTree.refresh(s.state);
       }
+      wasReady = ready;
       if (s.status === 'error' && config.get().showDiagnosticsOnError !== false && !this.diagnosticsShownFor.has(bundle.key)) {
         // A failed spawn has no in-context explanation; the panel carries the
         // spawn argv, stderr and log lines needed to diagnose it. Only open once
@@ -634,7 +723,8 @@ export class AppController {  // async dispose; see dispose() below
         void diagnostics.show();
       }
     }));
-    this.disposables.push(bundle.snapshots.onDidChange(() => {
+    bundle.disposables.push(bundle.snapshots.onDidChange(() => {
+      if (!isActive()) return;
       statusBar.refresh();
       this.changeTree.refresh();
       this.overview.update();
@@ -643,7 +733,7 @@ export class AppController {  // async dispose; see dispose() below
     // Normal settles may arrive before/after this signal; SnapshotService merges
     // them into ONE commit per turn (re-writes the same turn commit instead of
     // appending a second one).
-    this.disposables.push(bundle.collector.onSnapshotRequest.event((req) => {
+    bundle.disposables.push(bundle.collector.onSnapshotRequest.event((req) => {
       void bundle.snapshots.snapshot({
         reason: req.reason === 'aborted' ? 'aborted' : 'settled',
         aborted: req.reason === 'aborted',
@@ -655,18 +745,22 @@ export class AppController {  // async dispose; see dispose() below
     }));
   }
 
+  /** Make `key` the visible tab; trees, status bar and commands follow the active tab. */
   private async setActive(key: string): Promise<void> {
-    this.activeKey = key;
     const b = this.bindings.get(key);
     if (!b) return;
-    this.deps.chat.bindEdits(b.edits);
-    const state = await b.gateway.refreshState();
-    this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any);
+    this.activeKey = key;
+    // Background tabs kept their transcript: switching is instant and does not re-fetch.
+    this.deps.chat.setActiveSession(key);
     this.changeTree.refresh();
     this.overview.update();
-    void this.sessionTree.refresh(state);
     this.deps.statusBar.refresh();
-    return this.replayChat(b);
+    this.deps.diagnostics.update();
+    if (b.gateway.getState().status !== 'ready') return;
+    const state = await b.gateway.refreshState();
+    if (this.activeKey !== key) return;
+    this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any, undefined, b.gateway.getState(), key);
+    void this.sessionTree.refresh(state);
   }
 
   private async onSessionChanged(): Promise<void> {
@@ -674,12 +768,12 @@ export class AppController {  // async dispose; see dispose() below
     if (!b) return;
     const state = await b.gateway.refreshState();
     b.edits.reset();
-    this.deps.chat.bindEdits(b.edits);
-    this.deps.chat.postSessionDiffVisible(false);
+    this.deps.chat.bindEdits(b.edits, b.key);
+    this.deps.chat.postSessionDiffVisible(false, b.key);
     b.snapshots.bindSession(state, state?.sessionId);
     await b.snapshots.initialize();
     await b.snapshots.ensureBase();
-    this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any);
+    this.deps.chat.setStateInfo(state, b.gateway.getState().stats as any, undefined, undefined, b.key);
     await this.sessionTree.refreshDisk();          // rescan so the new session is marked 当前会话
     await this.sessionTree.refresh(state);
     this.deps.statusBar.refresh();
@@ -690,7 +784,7 @@ export class AppController {  // async dispose; see dispose() below
 
   private async replayChat(b: Bundle): Promise<void> {
     try {
-      await this.deps.chat.replay(await b.gateway.getMessages());
+      await this.deps.chat.replay(await b.gateway.getMessages(), b.key);
     } catch (err) {
       this.deps.log.error('replay messages after session switch failed', err);
       void vscode.window.showWarningMessage(`Pi: 会话已切换，但消息回放失败：${err instanceof Error ? err.message : String(err)}`);
@@ -709,6 +803,9 @@ export class AppController {  // async dispose; see dispose() below
       if (!b) return;
       const target = sessionPath.trim();
       if (!target) return;
+      // Already open in some tab: two processes must never append to one session file.
+      const open = this.bundleForSessionFile(target);
+      if (open) { if (open !== b) await this.setActive(open.key); return; }
       try {
         await vscode.workspace.fs.stat(vscode.Uri.file(target));
       } catch {
@@ -734,7 +831,7 @@ export class AppController {  // async dispose; see dispose() below
     const b = this.active();
     if (!b) return undefined;
     if (!b.sendCommands) {
-      b.sendCommands = new SendCommands(this.deps.config, this.deps.log, () => this.active()?.gateway, (text) => this.deps.chat.setEditorText(text, true));
+      b.sendCommands = new SendCommands(this.deps.config, this.deps.log, () => this.active()?.gateway, (text) => this.deps.chat.setEditorText(text, true, this.activeKey));
       this.disposables.push(b.sendCommands.bindReviewOnSave());
     }
     return b.sendCommands;
@@ -748,8 +845,8 @@ export class AppController {  // async dispose; see dispose() below
   }
 
   /** ChatViewProvider uses this hook for prompt / steer / followUp. */
-  async send(text: string, images?: Array<{ data: string; mimeType: string }>, behavior?: 'steer' | 'followUp'): Promise<void> {
-    const b = this.active();
+  async send(text: string, images?: Array<{ data: string; mimeType: string }>, behavior?: 'steer' | 'followUp', sessionKey?: string): Promise<void> {
+    const b = (sessionKey ? this.bindings.get(sessionKey) : undefined) ?? this.active();
     if (!b) throw new Error('没有可用的 Pi 工作区');
     if (text.startsWith('/') && await this.runLocalSlash(text)) return;
     const type = behavior === 'followUp' ? 'follow_up' : behavior === 'steer' && b.gateway.getState().state?.isStreaming ? 'steer' : 'prompt';
@@ -768,6 +865,7 @@ export class AppController {  // async dispose; see dispose() below
       '/abort': 'pi.abort', '/compact': 'pi.compact', '/copy': 'pi.openSessionDiff',
       '/export': 'pi.exportHtml', '/status': 'pi.showStatus', '/diff': 'pi.pickTurnDiff',
       '/bug': 'pi.bugReportWizard', '/share': 'pi.sharePreview',
+      '/parallel': 'pi.newParallelSession',
     };
     const command = builtins[name];
     if (!command) {
@@ -786,9 +884,9 @@ export class AppController {  // async dispose; see dispose() below
 
   async dispose(): Promise<void> {
     const bundles = [...this.bindings.values()];
-    for (const b of bundles) { b.collector.dispose(); b.gateway.dispose(); }
+    for (const b of bundles) { for (const d of b.disposables) d.dispose(); b.collector.dispose(); b.gateway.dispose(); }
     await Promise.all(bundles.map((b) => b.snapshots.flush().catch(() => {})));
-    for (const b of bundles) b.snapshots.dispose();
+    for (const b of bundles) { b.snapshots.dispose(); b.edits.dispose(); }
     for (const d of this.disposables) d.dispose();
     this.bindings.clear();
   }
@@ -806,4 +904,6 @@ interface Bundle {
   tui: TuiLauncher;
   sendCommands?: SendCommands;
   externalBrowser?: ExternalBrowser;
+  /** Subscriptions owned by this bundle; disposed when its tab closes. */
+  disposables: vscode.Disposable[];
 }

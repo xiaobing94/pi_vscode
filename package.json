@@ -155,6 +155,19 @@
         "icon": "$(versions)"
       },
       {
+        "command": "pi.newParallelSession",
+        "title": "Pi: 新开并行会话（独立进程，可同时运行）",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "pi.openSessionInNewTab",
+        "title": "Pi: 在新标签中打开会话（并行运行）"
+      },
+      {
+        "command": "pi.closeParallelSession",
+        "title": "Pi: 关闭当前会话标签"
+      },
+      {
         "command": "pi.switchSession",
         "title": "Pi: 切换会话"
       },
@@ -325,7 +338,8 @@
       },
       {
         "command": "pi.switchActiveSession",
-        "title": "Pi: 切换活动会话（多工作区 / 多会话）"
+        "title": "Pi: 切换会话标签（并行会话）",
+        "icon": "$(list-selection)"
       },
       {
         "command": "pi.openTurnEditDiff",
@@ -365,6 +379,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "pi.newParallelSession",
+          "when": "view == pi.chat",
+          "group": "navigation@1"
+        },
+        {
           "command": "pi.openTui",
           "when": "view == pi.chat && config.pi.enableTui",
           "group": "navigation@2"
@@ -386,6 +405,11 @@
         },
         {
           "command": "pi.newSession",
+          "when": "view == pi.chatSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "pi.newParallelSession",
           "when": "view == pi.chatSecondary",
           "group": "navigation@1"
         },
@@ -491,6 +515,10 @@
         },
         {
           "command": "pi.renameSession",
+          "when": "view == pi.sessions && viewItem == pi.session"
+        },
+        {
+          "command": "pi.openSessionInNewTab",
           "when": "view == pi.sessions && viewItem == pi.session"
         }
       ],
@@ -618,7 +646,8 @@
         "pi.multiSession": {
           "type": "boolean",
           "default": false,
-          "description": "P2：允许每个 workspace folder 并行保留多个会话（通过 QuickPick 切换活动会话）"
+          "markdownDescription": "已废弃：并行会话现在始终可用（会话标签栏 ＋ / `Pi: 新开并行会话`），此设置不再生效。",
+          "deprecationMessage": "并行会话现在始终可用，此设置不再生效。"
         },
         "pi.reviewOnSave.enabled": {
           "type": "boolean",
@@ -770,6 +799,16 @@
         "command": "pi.openTurnEditDiff",
         "key": "ctrl+alt+shift+d",
         "mac": "cmd+alt+shift+d"
+      },
+      {
+        "command": "pi.newParallelSession",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      },
+      {
+        "command": "pi.switchActiveSession",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
       }
     ],
     "chatParticipants": [

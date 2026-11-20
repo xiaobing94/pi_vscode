@@ -64,7 +64,52 @@ let changesOpen = vscode.getState()?.changesOpen !== false;
 let historyCount = -1;
 let currentSession: { id?: string; name?: string; file?: string } = {};
 
-function post(msg: unknown): void { vscode.postMessage(msg); }
+interface SessionTab { key: string; label: string; streaming: boolean; unread: boolean; status: string; folder?: string }
+let tabs: SessionTab[] = [];
+let activeTab = '';
+/** Unsent composer text per tab, so switching tabs never loses a draft. */
+const drafts: Record<string, string> = vscode.getState()?.drafts ?? {};
+
+/** Every message is stamped with the tab it was sent from (the host routes by it). */
+function post(msg: unknown): void { vscode.postMessage({ ...(msg as object), session: activeTab || undefined }); }
+
+function renderTabs(): void {
+  const el = $('tabs');
+  // A single session needs no tab strip; the session bar's 并行 button opens the second one.
+  el.hidden = tabs.length < 2;
+  if (el.hidden) { el.innerHTML = ''; return; }
+  const multiFolder = new Set(tabs.map((t) => t.folder ?? '')).size > 1;
+  el.innerHTML = tabs.map((t) => {
+    const cur = t.key === activeTab;
+    const state = t.streaming ? '<span class="spin tab-spin" title="运行中"></span>'
+      : t.status === 'error' ? '<span class="tab-err" title="Pi 进程不可用">!</span>'
+      : t.unread ? '<span class="tab-dot" title="有新结果"></span>' : '';
+    const tip = `${t.label}${multiFolder && t.folder ? ` · ${t.folder}` : ''}${t.streaming ? ' · 运行中' : ''}
+中键或 × 关闭（会停止该会话的 Pi 进程）`;
+    return `<div class="tab ${cur ? 'cur' : ''}" role="tab" aria-selected="${cur}" data-tab="${esc(t.key)}" title="${esc(tip)}">
+      ${state}<span class="tab-label">${esc(t.label)}</span>
+      <button type="button" class="tab-x" data-tab-close="${esc(t.key)}" title="关闭标签" aria-label="关闭">×</button></div>`;
+  }).join('') + '<button type="button" class="tab-add" data-tab-add title="新开并行会话（独立 Pi 进程，可同时运行）" aria-label="新开并行会话">＋</button>';
+}
+
+function onSessions(list: SessionTab[], active: string): void {
+  const prev = activeTab;
+  tabs = list;
+  if (active !== prev) {
+    if (prev) drafts[prev] = composer.value;
+    activeTab = active;
+    composer.value = drafts[active] ?? '';
+    images = [];
+    renderAttachments();
+    autosize();
+    refreshSend();
+    slash.style.display = 'none';
+    toggleModelMenu(false);
+    persist();
+  }
+  for (const k of Object.keys(drafts)) if (!tabs.some((t) => t.key === k)) delete drafts[k];
+  renderTabs();
+}
 
 /** Session header: makes the history entry explicit instead of an ambiguous 🕘 icon. */
 function renderSessionBar(): void {
@@ -83,7 +128,8 @@ function renderSessionBar(): void {
 }
 
 function persist(): void {
-  vscode.setState({ collapsed, draft: composer.value, changesOpen });
+  if (activeTab) drafts[activeTab] = composer.value;
+  vscode.setState({ collapsed, draft: composer.value, drafts, changesOpen });
 }
 
 function statusGlyph(s: SessionChange['status']): string {
@@ -393,8 +439,14 @@ window.addEventListener('message', (event: MessageEvent) => {
         currentSession = { id: msg.state.sessionId, name: msg.state.sessionName, file: msg.state.sessionFile };
         renderSessionBar();
       }
-      if (typeof msg.streaming === 'boolean') { streaming = msg.streaming; refreshSend(); }
+      if (typeof msg.streaming === 'boolean') {
+        streaming = msg.streaming;
+        $('activity').textContent = streaming ? '运行中…' : '空闲';
+        document.body.classList.toggle('busy', streaming);
+        refreshSend();
+      }
       break;
+    case 'sessions': onSessions(msg.sessions ?? [], String(msg.active ?? '')); break;
     case 'append': appendItem(msg.item); break;
     case 'update': updateItem(msg.item); break;
     case 'remove': removeItem(String(msg.id)); break;
@@ -519,6 +571,12 @@ document.addEventListener('click', (e: MouseEvent) => {
   const q = (sel: string) => target.closest<HTMLElement>(sel);
   if (!q('.model-wrap') && !modelMenu.hidden) toggleModelMenu(false);
 
+  const tabClose = q('[data-tab-close]');
+  if (tabClose) { post({ type: 'closeSession', key: tabClose.dataset.tabClose }); return; }
+  if (q('[data-tab-add]')) { post({ type: 'newParallelSession' }); return; }
+  const tab = q('[data-tab]');
+  if (tab) { if (tab.dataset.tab !== activeTab) post({ type: 'switchSession', key: tab.dataset.tab }); return; }
+
   const scFile = q('[data-sc-key]');
   if (scFile) { post({ type: 'openSessionFileDiff', key: scFile.dataset.scKey }); return; }
   if (q('#sc-toggle')) {
@@ -612,6 +670,12 @@ $('attach').addEventListener('click', () => fileInput.click());
 $('mention').addEventListener('click', () => post({ type: 'insertFiles' }));
 $('history').addEventListener('click', () => post({ type: 'resumeSession' }));
 $('new-session').addEventListener('click', () => post({ type: 'newSession' }));
+$('new-tab').addEventListener('click', () => post({ type: 'newParallelSession' }));
+// Middle-click closes a tab, like editor tabs.
+$('tabs').addEventListener('auxclick', (e: MouseEvent) => {
+  const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
+  if (e.button === 1 && tab?.dataset.tab) { e.preventDefault(); post({ type: 'closeSession', key: tab.dataset.tab }); }
+});
 $('empty-history').addEventListener('click', () => post({ type: 'resumeSession' }));
 $('empty-new').addEventListener('click', () => post({ type: 'newSession' }));
 $('session-diff').addEventListener('click', () => post({ type: 'openSessionDiff' }));

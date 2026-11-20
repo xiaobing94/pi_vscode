@@ -98,7 +98,17 @@ export class RpcGateway implements vscode.Disposable {
     await this.writeRaw(value);
   }
 
-  async start(): Promise<boolean> {
+  /** In-flight start: `send()` auto-starts, so parallel callers must share one spawn. */
+  private starting: Promise<boolean> | undefined;
+
+  start(): Promise<boolean> {
+    if (this.starting) return this.starting;
+    const run = this.doStart().finally(() => { if (this.starting === run) this.starting = undefined; });
+    this.starting = run;
+    return run;
+  }
+
+  private async doStart(): Promise<boolean> {
     if (this.disposed) return false;
     if (this.child && !this.child.killed) return true;
     this.stopping = false;

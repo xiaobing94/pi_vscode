@@ -7,6 +7,7 @@ export interface PiConfigShape {
   model: string;
   thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   enableTui: boolean;
+  /** @deprecated parallel sessions are always available (tab strip). Kept for settings compatibility. */
   multiSession: boolean;
   /** Open the diagnostics panel when the Pi process fails to start. */
   showDiagnosticsOnError: boolean;
@@ -84,7 +85,7 @@ export class Config {
    */
   static readonly RESTART_KEYS = [
     'pi.executablePath', 'pi.cliEntryPath', 'pi.nodePath', 'pi.model', 'pi.thinkingLevel',
-    'pi.multiSession', 'pi.shadowGit.enabled', 'pi.shadowGit.usePiExtension',
+    'pi.shadowGit.enabled', 'pi.shadowGit.usePiExtension',
     'pi.shadowGit.location', 'pi.shadowGit.customPath',
   ] as const;
 

@@ -96,7 +96,8 @@ code --install-extension pi-vscode-0.2.0.vsix
 ### 会话
 - 新建 / 重命名 / fork / clone / 导出 HTML / `/share` 预览
 - **磁盘历史会话**：扫描 `~/.pi/agent/sessions/**/*.jsonl`，按首条用户消息命名、本工作区优先、时间倒序；恢复前会校验文件存在
-- 崩溃后自动恢复上一次会话；`pi.multiSession` 开启后同一 folder 可并行多个独立会话并切换
+- 崩溃后自动恢复上一次会话
+- **并行会话**：会话栏的「⧉ 并行」、标签栏的 ＋、`/parallel` 或 `Ctrl+Alt+T` 新开一个标签，每个标签是独立的 Pi 进程，可同时运行；后台标签运行中显示转圈、完成后显示蓝点，切回即看到完整输出。中键或 × 关闭标签（会停止该进程），`Ctrl+Alt+S` 列出全部标签切换；在「Pi 会话」视图右键历史会话可「在新标签中打开」。同一会话文件不会被两个标签同时打开
 - `Pi: 在终端中打开（TUI）` 拉起真终端 Pi（与原生面板共用同一会话 JSONL）
 
 ### 影子 Git 改动记录
@@ -150,6 +151,8 @@ code --install-extension pi-vscode-0.2.0.vsix
 | `Ctrl+Alt+Shift+D` / `Cmd+Alt+Shift+D` | 查看最近一轮改动（原生差异） |
 | `Ctrl+Alt+Enter` | 把选中代码发送给 Pi |
 | `Ctrl+Alt+X` | 中断当前运行（仅运行中生效） |
+| `Ctrl+Alt+T` / `Cmd+Alt+T` | 新开并行会话标签 |
+| `Ctrl+Alt+S` / `Cmd+Alt+S` | 切换会话标签 |
 
 ---
 
@@ -165,9 +168,9 @@ code --install-extension pi-vscode-0.2.0.vsix
 | `pi.model` | `""` | `provider/modelId`，空 = 沿用 Pi 默认模型 |
 | `pi.thinkingLevel` | `medium` | `off` … `max` |
 | `pi.enableTui` | `true` | 是否显示 TUI 入口 |
-| `pi.multiSession` | `false` | 允许每 folder 并行多会话 |
+| `pi.multiSession` | `false` | 已废弃：并行会话始终可用 |
 
-> 带 ⚠ 的设置会写入 Pi 的启动参数，**改动后需 `Pi: 重启 Pi 进程` 生效**（扩展会主动提示）：`pi.executablePath`、`pi.cliEntryPath`、`pi.nodePath`、`pi.model`、`pi.thinkingLevel`、`pi.multiSession`、`pi.shadowGit.enabled`、`pi.shadowGit.usePiExtension`、`pi.shadowGit.location`、`pi.shadowGit.customPath`。
+> 带 ⚠ 的设置会写入 Pi 的启动参数，**改动后需 `Pi: 重启 Pi 进程` 生效**（扩展会主动提示）：`pi.executablePath`、`pi.cliEntryPath`、`pi.nodePath`、`pi.model`、`pi.thinkingLevel`、`pi.shadowGit.enabled`、`pi.shadowGit.usePiExtension`、`pi.shadowGit.location`、`pi.shadowGit.customPath`。
 
 影子 Git 相关：
 
