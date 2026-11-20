@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Log } from '../core/Log';
 import type { RpcGateway } from '../pi/RpcGateway';
 import type { AgentEvent, ImageContent } from '../pi/protocol';
@@ -39,7 +40,12 @@ export class PiChatParticipant implements vscode.Disposable {
     participant.followupProvider = {
       provideFollowups: (result: vscode.ChatResult) => {
         const m = (result.metadata ?? {}) as { files?: number };
-        return m.files ? [{ prompt: '请检查刚才的改动是否有问题', label: '审查本轮改动' }] : [];
+        return m.files
+          ? [{
+            prompt: l10n('participant.pleaseCheckWhetherChanges'),
+            label: l10n('participant.reviewTurn'),
+          }]
+          : [];
       },
     };
     if ('onDidReceiveFeedback' in participant) {
@@ -54,30 +60,35 @@ export class PiChatParticipant implements vscode.Disposable {
   private async handle(req: vscode.ChatRequest, _ctx: vscode.ChatContext, stream: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<vscode.ChatResult> {
     const gw = this.deps.gateway();
     if (!gw) {
-      stream.markdown('当前没有可用的 Pi 会话。请先打开一个受信任的工作区文件夹。');
-      return { errorDetails: { message: 'Pi 未就绪' } };
+      stream.markdown(l10n('participant.sessionAvailableOpenTrusted'));
+      return { errorDetails: { message: l10n('participant.ready') } };
     }
 
     // Slash commands declared in package.json → host commands.
     switch (req.command) {
       case 'model': await vscode.commands.executeCommand('pi.selectModel', req.prompt || undefined); return {};
-      case 'new': await vscode.commands.executeCommand('pi.newSession'); stream.markdown('已新建 Pi 会话。'); return {};
+      case 'new': await vscode.commands.executeCommand('pi.newSession'); stream.markdown(l10n('participant.newSessionCreated')); return {};
       case 'diff': {
         const ok = await this.deps.edits()?.openSessionDiff();
-        stream.markdown(ok ? '已在编辑器中打开本会话的全部改动。' : '本会话还没有文件改动。');
+        stream.markdown(ok
+          ? l10n('participant.openedChangesSessionEditor')
+          : l10n('participant.sessionFileChangesYet'));
         return {};
       }
-      case 'compact': await gw.send({ type: 'compact' }); stream.markdown('已压缩上下文。'); return {};
+      case 'compact': await gw.send({ type: 'compact' }); stream.markdown(l10n('participant.contextCompacted')); return {};
       default: break;
     }
 
     const prompt = await this.buildPrompt(req);
-    if (!prompt.text.trim()) { stream.markdown('请输入要让 Pi 完成的任务。'); return {}; }
+    if (!prompt.text.trim()) {
+      stream.markdown(l10n('participant.enterTaskWant'));
+      return {};
+    }
 
     if (gw.getState().state?.isStreaming) {
-      stream.progress('Pi 正在执行上一个任务，本条消息将在下一次模型调用前插入…');
+      stream.progress(l10n('participant.stillRunningPreviousTask'));
     } else {
-      stream.progress('Pi 正在思考…');
+      stream.progress(l10n('participant.thinking'));
     }
 
     let settled!: () => void;
@@ -93,7 +104,7 @@ export class PiChatParticipant implements vscode.Disposable {
         case 'message_update': {
           const ae = e.assistantMessageEvent as any;
           if (ae?.type === 'text_delta' && ae.delta) stream.markdown(String(ae.delta));
-          else if (ae?.type === 'thinking_start') stream.progress('思考中…');
+          else if (ae?.type === 'thinking_start') stream.progress(l10n('participant.thinking2'));
           break;
         }
         case 'message_end': {
@@ -133,20 +144,27 @@ export class PiChatParticipant implements vscode.Disposable {
 
     if (summary?.files.length) this.renderChanges(stream, summary);
     if (error) return { errorDetails: { message: error }, metadata: { files: summary?.files.length ?? 0 } };
-    if (aborted || token.isCancellationRequested) stream.markdown('\n\n_已终止_');
+    if (aborted || token.isCancellationRequested) stream.markdown(l10n('participant.aborted'));
     return { metadata: { files: summary?.files.length ?? 0, turnId: summary?.turnId } };
   }
 
   private renderChanges(stream: vscode.ChatResponseStream, s: TurnSummary): void {
     const tracker = this.deps.edits();
-    stream.markdown(`\n\n---\n**${s.files.length} 个文件已更改** · +${s.added} -${s.removed}\n\n`);
+    stream.markdown(l10n('participant.fileSChanged', s.files.length, s.added, s.removed));
     for (const f of s.files) {
       const abs = tracker ? vscode.Uri.file(tracker.turn(s.turnId)?.files.get(f.key)?.absPath ?? f.display) : undefined;
       if (abs) stream.anchor(abs, `${f.status} ${f.display}  +${f.added} -${f.removed}`);
       stream.markdown('\n');
     }
-    stream.button({ command: 'pi.openTurnEditDiff', title: '$(diff) 查看本轮差异', arguments: [s.turnId] });
-    stream.button({ command: 'pi.openSessionEditDiff', title: '$(git-compare) 本会话全部改动' });
+    stream.button({
+      command: 'pi.openTurnEditDiff',
+      title: l10n('participant.diffShowTurnS'),
+      arguments: [s.turnId],
+    });
+    stream.button({
+      command: 'pi.openSessionEditDiff',
+      title: l10n('participant.gitCompareChangesSession'),
+    });
   }
 
   /** Inline #file / selection references so Pi sees exactly what the user attached. */

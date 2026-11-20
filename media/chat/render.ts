@@ -2,6 +2,7 @@
 import { Marked, Renderer, type Tokens } from 'marked';
 import type { AgentMessage } from '../../src/pi/protocol';
 import { messageBlocks, messageText } from '../../src/pi/protocol';
+import { l10n } from './i18n';
 
 export function esc(value: unknown): string {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
@@ -12,7 +13,7 @@ export function esc(value: unknown): string {
 const PATH_RE = /(^|[\s(（:：,，"'`])@?((?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\w.-]+[\\/])[\w.\-\\/\u4e00-\u9fa5]*\.[A-Za-z0-9]{1,8})(?::(\d+)(?::(\d+))?)?/g;
 
 function pathLink(p: string, line?: string, col?: string, label?: string): string {
-  return `<a href="#" class="path" data-path="${esc(p)}" data-line="${esc(line ?? '1')}" data-col="${esc(col ?? '1')}" title="在编辑器中打开">${esc(label ?? p + (line ? `:${line}${col ? `:${col}` : ''}` : ''))}</a>`;
+  return `<a href="#" class="path" data-path="${esc(p)}" data-line="${esc(line ?? '1')}" data-col="${esc(col ?? '1')}" title="${l10n('webview.openEditor')}">${esc(label ?? p + (line ? `:${line}${col ? `:${col}` : ''}` : ''))}</a>`;
 }
 
 /** Linkify file paths inside an already-escaped text run (never inside tags). */
@@ -26,7 +27,7 @@ function linkifyEscaped(html: string): string {
 const renderer = new Renderer();
 renderer.code = ({ text, lang }: Tokens.Code): string => {
   const language = esc((lang ?? '').split(/\s+/)[0] ?? '');
-  return `<div class="code-block"><div class="code-head"><span>${language || 'text'}</span><button type="button" data-copy-code title="复制代码块">复制</button></div><pre><code class="lang-${language}">${esc(text)}</code></pre></div>`;
+  return `<div class="code-block"><div class="code-head"><span>${language || 'text'}</span><button type="button" data-copy-code title="${l10n('render.copyCodeBlock')}">${l10n('webview.copy')}</button></div><pre><code class="lang-${language}">${esc(text)}</code></pre></div>`;
 };
 renderer.codespan = ({ text }: Tokens.Codespan): string => {
   // marked 15 passes codespan text raw (unescaped)
@@ -94,10 +95,10 @@ export function renderMessage(message: AgentMessage, streaming = false): Rendere
     } else if (block?.type === 'thinking' || block?.type === 'thought') {
       const raw = String(block.thinking ?? block.text ?? block.thought ?? '');
       if (!raw.trim()) continue;
-      out.push({ kind: 'thinking', raw, html: `<details class="thinking"${streaming ? ' open' : ''}><summary>思考过程 · ${raw.length} 字</summary><div class="thinking-body">${renderMarkdown(raw, streaming)}<div class="thinking-actions"><button type="button" data-copy-thinking="">复制思考</button></div></div></details>` });
+      out.push({ kind: 'thinking', raw, html: `<details class="thinking"${streaming ? ' open' : ''}><summary>${l10n('render.thinkingChars', raw.length)}</summary><div class="thinking-body">${renderMarkdown(raw, streaming)}<div class="thinking-actions"><button type="button" data-copy-thinking="">${l10n('render.copyThinking')}</button></div></div></details>` });
     } else if (block?.type === 'image') {
       const mime = esc(block.mimeType ?? 'image/png');
-      out.push({ kind: 'image', html: `<img alt="图片" src="data:${mime};base64,${esc(block.data ?? '')}">`, raw: '' });
+      out.push({ kind: 'image', html: `<img alt="${l10n('render.image')}" src="data:${mime};base64,${esc(block.data ?? '')}">`, raw: '' });
     } else if (block?.type === 'toolCall') {
       // shown as its own tool card
     } else {
@@ -113,7 +114,9 @@ export function toolSummary(toolName: string | undefined, args: unknown): string
   const a = args as Record<string, any>;
   const p = a.path ?? a.file_path ?? a.filePath ?? a.file;
   if (typeof p === 'string') {
-    if (toolName === 'edit' && Array.isArray(a.edits)) return `${p} · ${a.edits.length} 处修改`;
+    if (toolName === 'edit' && Array.isArray(a.edits)) {
+      return l10n('render.editS', p, a.edits.length);
+    }
     return p;
   }
   if (typeof a.command === 'string') return a.command.length > 160 ? `${a.command.slice(0, 160)}…` : a.command;
@@ -132,6 +135,8 @@ export function renderPatch(patch: string, maxLines = 40): string {
     const cls = l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : l.startsWith('@@') ? 'hunk' : 'ctx';
     return `<div class="dl ${cls}">${esc(l) || '&nbsp;'}</div>`;
   }).join('');
-  const more = lines.length > maxLines ? `<div class="dl more">… 还有 ${lines.length - maxLines} 行，点击「查看差异」看完整内容</div>` : '';
+  const more = lines.length > maxLines
+    ? `<div class="dl more">${l10n('render.moreLineSClick', lines.length - maxLines)}</div>`
+    : '';
   return `<div class="patch">${body}${more}</div>`;
 }

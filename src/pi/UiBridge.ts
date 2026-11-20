@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { ExtensionUiRequest, RpcCommand } from '../pi/protocol';
 import type { Log } from '../core/Log';
 
@@ -35,11 +36,13 @@ export class UiBridge implements vscode.Disposable {
           return;
         }
         case 'confirm': {
+          const yes = l10n('uiBridge.ok');
+          const no = l10n('diff.cancel');
           const choice = await vscode.window.showWarningMessage(
-            req.message ?? req.title ?? 'Pi', { modal: true, detail: req.title }, '确定', '取消',
+            req.message ?? req.title ?? 'Pi', { modal: true, detail: req.title }, yes, no,
           );
           if (choice === undefined) respond({ type: 'extension_ui_response', id, cancelled: true });
-          else respond({ type: 'extension_ui_response', id, confirmed: choice === '确定' });
+          else respond({ type: 'extension_ui_response', id, confirmed: choice === yes });
           return;
         }
         case 'input': {
@@ -69,7 +72,7 @@ export class UiBridge implements vscode.Disposable {
             this.statusItems.set(key, item);
           }
           if (req.statusText === undefined || req.statusText === '') item.hide();
-          else { item.text = req.statusText; item.tooltip = `Pi 扩展 · ${key}`; item.show(); }
+          else { item.text = req.statusText; item.tooltip = l10n('uiBridge.extension', key); item.show(); }
           this.hooks.setStatus(key, req.statusText);
           return;
         }
@@ -109,9 +112,13 @@ export class UiBridge implements vscode.Disposable {
     const closeSub = vscode.workspace.onDidCloseTextDocument((d) => { if (d === doc) finish(); });
     disposable = vscode.Disposable.from(saveSub, closeSub);
     this.disposables.push(disposable);
+    const cancel = l10n('diff.cancel');
+    const submit = l10n('uiBridge.submit');
     void vscode.window.showInformationMessage(
-      `Pi: ${req.title ?? '编辑内容'} — 保存或关闭文档以提交`, '取消', '提交',
-    ).then((choice) => { if (choice === '取消') finish(true); else if (choice === '提交') finish(); });
+      l10n('uiBridge.saveCloseDocumentSubmit', req.title ?? 'Editing content'),
+      cancel,
+      submit,
+    ).then((choice) => { if (choice === cancel) finish(true); else if (choice === submit) finish(); });
   }
 
   dispose(): void {

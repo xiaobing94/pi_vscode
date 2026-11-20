@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { RpcGateway } from '../pi/RpcGateway';
@@ -28,26 +29,30 @@ export class TuiLauncher {
   async open(cwd: string, sessionFile?: string, sessionId?: string): Promise<void> {
     const cfg = this.config.get();
     if (!cfg.enableTui) {
+      const enable = l10n('tui.enableOpen');
+      const settings = l10n('tui.openSettings');
       const choice = await vscode.window.showWarningMessage(
-        'Pi: 设置 pi.enableTui 为 false，TUI 入口已隐藏。是否启用并打开 TUI？',
-        { modal: true }, '启用并打开', '打开设置', '取消');
-      if (choice === '打开设置') {
+        l10n('tui.enabletuiFalseTuiEntry'),
+        { modal: true }, enable, settings, l10n('diff.cancel'));
+      if (choice === settings) {
         await vscode.commands.executeCommand('workbench.action.openSettings', 'pi.enableTui');
         return;
       }
-      if (choice !== '启用并打开') return;
+      if (choice !== enable) return;
       await vscode.workspace.getConfiguration('pi').update('enableTui', true, vscode.ConfigurationTarget.Global);
     }
     const runtime = await this.resolver.forTui();
     if (!runtime) {
-      void vscode.window.showErrorMessage('Pi: 找不到 pi CLI，无法打开 TUI。');
+      void vscode.window.showErrorMessage(l10n('tui.cliCouldFoundTui'));
       return;
     }
     const gatewayState = this.gateway()?.getState();
     if (gatewayState?.state?.isStreaming) {
+      const openAnyway = l10n('tui.openAnyway');
       const choice = await vscode.window.showWarningMessage(
-        'Pi: 原生通道正在运行。切换到 TUI 前建议先中断，另一侧可能有未结束的运行。', { modal: true }, '仍要打开', '取消');
-      if (choice !== '仍要打开') return;
+        l10n('tui.nativeChannelStillRunning'),
+        { modal: true }, openAnyway, l10n('diff.cancel'));
+      if (choice !== openAnyway) return;
     }
     const cli = runtime.cliEntryPath;
     const args = [...runtime.prefix];

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { RpcGateway } from '../pi/RpcGateway';
@@ -29,7 +30,7 @@ export class SendCommands {
     const p = uri ?? editor.document.uri;
     const rel = vscode.workspace.asRelativePath(p, false);
     const language = editor.document.languageId;
-    this.inject(`以下为文件 \`${rel}\` 的选中片段（${language}）：\n\`\`\`${language}\n${text}\n\`\`\`\n`);
+    this.inject(l10n('send.selectedExcerpt', rel, language, language, text));
   }
 
   async sendFile(uri?: vscode.Uri): Promise<void> {
@@ -37,7 +38,7 @@ export class SendCommands {
     if (!target || target.scheme !== 'file') return;
     const doc = await vscode.workspace.openTextDocument(target);
     const rel = vscode.workspace.asRelativePath(target, false);
-    this.inject(`以下为文件 \`${rel}\` 的完整内容（${doc.languageId}）：\n\`\`\`${doc.languageId}\n${doc.getText()}\n\`\`\`\n`);
+    this.inject(l10n('send.fullContent', rel, doc.languageId, doc.languageId, doc.getText()));
   }
 
   async sendProblems(): Promise<void> {
@@ -49,8 +50,11 @@ export class SendCommands {
       message: d.message,
       source: d.source,
     })));
-    if (!rows.length) { void vscode.window.showInformationMessage('Pi: 当前没有 Problems 诊断。'); return; }
-    this.inject(`以下为当前 Problems 诊断（${rows.length} 条）：\n\`\`\`json\n${JSON.stringify(rows.slice(0, 200), null, 2)}\n\`\`\`\n`);
+    if (!rows.length) {
+      void vscode.window.showInformationMessage(l10n('send.problemsDiagnosticsRightNow'));
+      return;
+    }
+    this.inject(l10n('send.currentProblemsDiagnosticsEntries', rows.length, JSON.stringify(rows.slice(0, 200), null, 2)));
   }
 
   async sendGitDiff(staged = false): Promise<void> {
@@ -59,14 +63,16 @@ export class SendCommands {
     const args = staged ? ['diff', '--cached'] : ['diff'];
     const diff = await this.git(args, cwd);
     const status = await this.git(['status', '--porcelain'], cwd);
-    this.inject(`以下为当前工作区的 ${staged ? '暂存区' : '未暂存'} Git 差异：\n\`\`\`diff\n${diff || '(无差异)'}\n\`\`\`\n\n状态：\n\`\`\`\n${status || '(干净)'}\n\`\`\`\n`);
+    const emptyDiff = l10n('send.changes');
+    const clean = l10n('send.clean');
+    this.inject(l10n('send.currentGitDiffWorkspace', staged ? 'staged' : 'unstaged', diff || emptyDiff, status || clean));
   }
 
   async generateCommitMessage(): Promise<void> {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!cwd) return;
     const diff = await this.git(['diff', '--cached'], cwd) || await this.git(['diff'], cwd);
-    const prompt = `请根据以下 Git 差异生成一条符合 Conventional Commits 的提交信息，只输出标题与可选正文，不要修改文件：\n\`\`\`diff\n${diff.slice(0, 100_000)}\n\`\`\``;
+    const prompt = l10n('send.writeConventionalCommitsMessage', diff.slice(0, 100_000));
     const gw = this.gateway();
     if (!gw) { this.inject(prompt); return; }
     await gw.send({ type: 'prompt', message: prompt, streamingBehavior: 'followUp' });
@@ -74,7 +80,10 @@ export class SendCommands {
 
   /** P2: /bug 报告向导 (collect diagnostics + environment, inject, never auto-send). */
   async bugReportWizard(): Promise<void> {
-    const issue = await vscode.window.showInputBox({ title: 'Pi: /bug 报告向导', placeHolder: '简述问题与复现步骤' });
+    const issue = await vscode.window.showInputBox({
+      title: l10n('send.bugReportWizard'),
+      placeHolder: l10n('send.describeProblemHowReproduce'),
+    });
     if (issue === undefined) return;
     const state = this.gateway()?.getState();
     const env = {
@@ -86,7 +95,7 @@ export class SendCommands {
       sessionId: state?.state?.sessionId,
     };
     const diagnostics = vscode.languages.getDiagnostics().reduce((n, [, list]) => n + list.length, 0);
-    const report = `/bug\n\n**问题描述**\n${issue}\n\n**环境**\n\`\`\`json\n${JSON.stringify(env, null, 2)}\n\`\`\`\n\n**Problems 数量**: ${diagnostics}\n**影子仓库**: 已启用=${this.config.get().shadowGit.enabled}\n`;
+    const report = l10n('send.bugWhatHappenedEnvironment', issue, JSON.stringify(env, null, 2), diagnostics, String(this.config.get().shadowGit.enabled));
     this.inject(report);
   }
 
@@ -97,9 +106,9 @@ export class SendCommands {
     try {
       const { path: file } = await gw.send<{ path: string }>({ type: 'export_html' });
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
-      const panel = vscode.window.createWebviewPanel('pi.share', 'Pi: /share 预览', vscode.ViewColumn.Beside, { enableScripts: false });
+      const panel = vscode.window.createWebviewPanel('pi.share', l10n('send.sharePreview'), vscode.ViewColumn.Beside, { enableScripts: false });
       panel.webview.html = doc.getText();
-      void vscode.window.showInformationMessage(`Pi: 已导出 ${file}`);
+      void vscode.window.showInformationMessage(l10n('app.exported', file));
     } catch (err) { this.log.error('share preview failed', err); }
   }
 

@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const bundle = path.join(root, 'dist', 'extension.js');
 
-export function makeVscodeMock() {
+export function makeVscodeMock(options = {}) {
   class Emitter {
     listeners = new Set();
     event = (l) => { this.listeners.add(l); return { dispose: () => this.listeners.delete(l) }; };
@@ -78,7 +78,12 @@ export function makeVscodeMock() {
     commands: { registerCommand: () => new Disposable(), executeCommand: async () => undefined },
     extensions: { getExtension: () => undefined },
     languages: { getDiagnostics: () => [] },
-    env: { clipboard: { writeText: async () => {} }, openExternal: async () => true },
+    // Most tests assert the zh-CN strings; pass `language` to exercise another locale.
+    env: {
+      language: options.language ?? 'zh-cn',
+      clipboard: { writeText: async () => {} },
+      openExternal: async () => true,
+    },
     ThemeIcon: class { constructor(id) { this.id = id; } },
     TreeItem: class { constructor(label, collapsibleState) { this.label = label; this.collapsibleState = collapsibleState; } },
     TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },

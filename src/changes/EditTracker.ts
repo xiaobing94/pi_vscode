@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Log } from '../core/Log';
 import type { AgentEvent } from '../pi/protocol';
 import { messageText } from '../pi/protocol';
@@ -363,9 +364,9 @@ export class EditTracker implements vscode.Disposable {
     const base = this.sessionBase.get(key);
     const abs = this.findAbs(key);
     if (!base || !abs) return false;
-    const left = this.blobUri('会话开始前', abs, base.before);
-    const right = await this.rightSide(abs, undefined, true, '当前');
-    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(abs)} · 本会话累计`, { preview: true });
+    const left = this.blobUri(l10n('edits.beforeSessionStart'), abs, base.before);
+    const right = await this.rightSide(abs, undefined, true, l10n('edits.current'));
+    await vscode.commands.executeCommand('vscode.diff', left, right, l10n('edits.cumulativeSessionChange', path.basename(abs)), { preview: true });
     return true;
   }
 
@@ -394,11 +395,12 @@ export class EditTracker implements vscode.Disposable {
 
   /** Native diff for one tool call (before ↔ after that call). */
   async openToolDiff(toolCallId: string): Promise<boolean> {
-    const t = this.tools.get(toolCallId);
-    if (!t) return false;
-    const left = this.blobUri('修改前', t.absPath, t.before);
-    const right = this.blobUri('修改后', t.absPath, t.after);
-    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(t.absPath)} · ${t.toolName}${t.approximate ? ' (前像不完整)' : ''}`, { preview: true });
+    const c = this.tools.get(toolCallId);
+    if (!c) return false;
+    const left = this.blobUri(l10n('edits.before'), c.absPath, c.before);
+    const right = this.blobUri(l10n('edits.after'), c.absPath, c.after);
+    const partial = c.approximate ? l10n('edits.partialBeforeImage') : '';
+    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(c.absPath)} · ${c.toolName}${partial}`, { preview: true });
     return true;
   }
 
@@ -407,15 +409,16 @@ export class EditTracker implements vscode.Disposable {
     const f = turn?.files.get(key) ?? [...(turn?.files.values() ?? [])].find((x) => x.display === key);
     if (!turn || !f) return false;
     const { left, right } = await this.urisFor(turn, f);
-    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(f.absPath)} · 第 ${turn.index} 轮${f.approximate ? ' (前像不完整)' : ''}`, { preview: true });
+    const partial = f.approximate ? l10n('edits.partialBeforeImage') : '';
+    await vscode.commands.executeCommand('vscode.diff', left, right, l10n('edits.turn', path.basename(f.absPath), turn.index, partial), { preview: true });
     return true;
   }
 
   private async urisFor(turn: TurnEdits, f: FileEdit): Promise<{ left: vscode.Uri; right: vscode.Uri }> {
     if (f.shadow) return f.shadow;
     const isLatest = this.latestTurn()?.id === turn.id;
-    const left = this.blobUri(`第${turn.index}轮前`, f.absPath, f.before);
-    const right = await this.rightSide(f.absPath, f.after, isLatest, `第${turn.index}轮后`);
+    const left = this.blobUri(l10n('edits.beforeTurn', turn.index), f.absPath, f.before);
+    const right = await this.rightSide(f.absPath, f.after, isLatest, l10n('edits.afterTurn', turn.index));
     return { left, right };
   }
 
@@ -428,7 +431,7 @@ export class EditTracker implements vscode.Disposable {
       const { left, right } = await this.urisFor(turn, f);
       resources.push([vscode.Uri.file(f.absPath), left, right]);
     }
-    const title = `Pi 第 ${turn.index} 轮 · ${turn.files.size} 个文件${turn.prompt ? ` · ${turn.prompt.slice(0, 30)}` : ''}`;
+    const title = l10n('edits.turnFileS', turn.index, turn.files.size, turn.prompt ? ` · ${turn.prompt.slice(0, 30)}` : '');
     return this.openMulti(title, resources);
   }
 
@@ -438,11 +441,11 @@ export class EditTracker implements vscode.Disposable {
     for (const [key, base] of this.sessionBase) {
       const abs = this.findAbs(key);
       if (!abs) continue;
-      const left = this.blobUri('会话开始前', abs, base.before);
-      const right = await this.rightSide(abs, undefined, true, '当前');
+      const left = this.blobUri(l10n('edits.beforeSessionStart'), abs, base.before);
+      const right = await this.rightSide(abs, undefined, true, l10n('edits.current'));
       resources.push([vscode.Uri.file(abs), left, right]);
     }
-    return this.openMulti(`Pi 本会话累计改动 · ${resources.length} 个文件`, resources);
+    return this.openMulti(l10n('edits.cumulativeSessionChangesFile', resources.length), resources);
   }
 
   private findAbs(key: string): string | undefined {

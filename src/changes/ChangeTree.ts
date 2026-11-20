@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { dateTime, l10n } from '../core/I18n';
 import type { ChangeRecord, SnapshotService, TurnRecord } from '../changes/SnapshotService';
 
 export type ChangeNode =
@@ -39,35 +40,49 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
     switch (element.kind) {
       case 'scopeGroup': {
         const external = element.scope === 'external';
-        const item = new vscode.TreeItem(external ? '⚠️ 工程外' : '📁 本工作区', vscode.TreeItemCollapsibleState.Expanded);
-        item.description = `${element.count} 项`;
+        const item = new vscode.TreeItem(
+          external ? l10n('changeTree.outsideWorkspace') : l10n('changeTree.workspace'),
+          vscode.TreeItemCollapsibleState.Expanded,
+        );
+        item.description = l10n('changeTree.itemS', element.count);
         item.contextValue = external ? 'pi.externalGroup' : 'pi.scope';
         item.iconPath = new vscode.ThemeIcon(external ? 'warning' : 'folder');
-        item.tooltip = external ? '工程外改动单独归类（只读，绝不写回原路径）' : '工程内改动';
+        item.tooltip = external
+          ? l10n('changeTree.workspaceChangesGroupedSeparately')
+          : l10n('changeTree.changesInsideWorkspace');
         return item;
       }
       case 'turn': {
-        const m = element.turn.meta;        const item = new vscode.TreeItem(`第 ${m.turnIndex} 轮 · ${(m.prompt ?? m.reason).slice(0, 36) || '无标题'}`, vscode.TreeItemCollapsibleState.Collapsed);
-        item.description = `${element.turn.changes.length} 项`;
-        item.tooltip = `${m.createdAt}\n模型: ${m.model ?? '-'}\n工具: ${(m.toolCalls ?? []).join(', ') || '-'}${m.aborted ? '\n⚠ 本轮被中断' : ''}`;
+        const m = element.turn.meta;
+        const untitled = l10n('changeTree.untitled');
+        const item = new vscode.TreeItem(
+          l10n('changeTree.turn', m.turnIndex, (m.prompt ?? m.reason).slice(0, 36) || untitled),
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
+        item.description = l10n('changeTree.itemS', element.turn.changes.length);
+        const tools = (m.toolCalls ?? []).join(', ') || '-';
+        item.tooltip = l10n('changeTree.modelTools', dateTime(m.createdAt), m.model ?? '-', tools, m.aborted ? '\n⚠ this turn was aborted' : '');
         item.contextValue = 'pi.turn';
         item.iconPath = new vscode.ThemeIcon(m.aborted ? 'debug-stop' : 'git-commit');
-        item.command = { command: 'pi.openTurnDiff', title: '查看本轮差异', arguments: [element] };
+        item.command = { command: 'pi.openTurnDiff', title: l10n('changeTree.showDiffTurn'), arguments: [element] };
         return item;
       }
       case 'change': {
         const c = element.change;
         const label = c.displayPath;
         const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-        item.description = `${c.status}${c.redacted ? ' · 已脱敏' : ''}`;
+        item.description = c.redacted ? `${c.status} · ${l10n('changeTree.redacted')}` : c.status;
         item.contextValue = 'pi.change';
         item.iconPath = new vscode.ThemeIcon(c.status === 'A' ? 'diff-added' : c.status === 'D' ? 'diff-removed' : 'diff-modified');
-        item.tooltip = `${c.scope === 'external' ? '⚠ 工程外 · ' : ''}${c.path}\n第 ${c.turnIndex} 轮 · ${c.at}`;
-        item.command = { command: 'pi.openChangeDiff', title: '查看该改动差异', arguments: [element] };
+        item.tooltip = l10n('changeTree.turn2', c.scope === 'external' ? '⚠ outside workspace · ' : '', c.path, c.turnIndex, c.at);
+        item.command = { command: 'pi.openChangeDiff', title: l10n('changeTree.showDiffChange'), arguments: [element] };
         return item;
       }
       case 'subagentGroup': {
-        const item = new vscode.TreeItem(`🤖 子代理 ${element.label} (${element.count})`, vscode.TreeItemCollapsibleState.Collapsed);
+        const item = new vscode.TreeItem(
+          l10n('changeTree.subagent', element.label, element.count),
+          vscode.TreeItemCollapsibleState.Collapsed,
+        );
         item.iconPath = new vscode.ThemeIcon('organization');
         item.contextValue = 'pi.subagent';
         return item;
@@ -76,8 +91,8 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
         const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
         item.description = element.description;
         item.iconPath = new vscode.ThemeIcon('error');
-        item.tooltip = `${element.description ?? ''}\n点击运行环境检查`;
-        item.command = { command: 'pi.checkEnvironment', title: '检查运行环境' };
+        item.tooltip = l10n('changeTree.clickRunEnvironmentCheck', element.description ?? '');
+        item.command = { command: 'pi.checkEnvironment', title: l10n('changeTree.checkEnvironment') };
         return item;
       }
       default: {
@@ -91,12 +106,16 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
 
   getChildren(element?: ChangeNode): ChangeNode[] {
     const service = this.snapshots();
-    if (!service) return [{ kind: 'info', label: '影子仓库未初始化', description: 'pi.shadowGit.enabled' }];
+    if (!service) return [{ kind: 'info', label: l10n('changeTree.shadowRepositoryInitialized'), description: 'pi.shadowGit.enabled' }];
     if (!element) {
       // A missing/broken git install used to leave this view silently empty.
       const reason = service.unavailableReason;
       if (reason) {
-        return [{ kind: 'unavailable', label: '影子仓库不可用', description: reason.message.split('\n')[0].slice(0, 90) }];
+        return [{
+          kind: 'unavailable',
+          label: l10n('changeTree.shadowRepositoryUnavailable'),
+          description: reason.message.split('\n')[0].slice(0, 90),
+        }];
       }
     }
     const turns = service.getTurns();
@@ -124,7 +143,11 @@ export class ChangeTree implements vscode.TreeDataProvider<ChangeNode>, vscode.D
         .map((t) => ({ kind: 'turn' as const, turn: t }));
     }
     if (element.kind === 'turn') return element.turn.changes.filter(matches).map((c) => ({ kind: 'change' as const, change: c }));
-    if (element.kind === 'subagentGroup') return [{ kind: 'info', label: `${element.count} 次工具调用`, description: '按 parentToolCallId 分组（P2）' }];
+    if (element.kind === 'subagentGroup') return [{
+      kind: 'info',
+      label: l10n('changeTree.toolCallS', element.count),
+      description: l10n('changeTree.groupedParenttoolcallid'),
+    }];
     return [];
   }
 

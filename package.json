@@ -1,7 +1,7 @@
 {
   "name": "pi-shadow-agent",
-  "displayName": "Pi — Agent with Shadow Git",
-  "description": "在 VS Code 原生侧栏里使用 Pi coding agent，并用独立的影子 Git 仓库记录每次对话带来的文件改动。",
+  "displayName": "Pi Shadow Agent",
+  "description": "%description%",
   "version": "0.2.0",
   "publisher": "xiaobing",
   "license": "MIT",
@@ -27,9 +27,26 @@
   ],
   "keywords": [
     "pi",
-    "coding agent",
+    "pi coding agent",
+    "ai coding agent",
+    "ai agent",
+    "autonomous agent",
+    "vscode",
+    "vs code",
     "shadow git",
-    "diff"
+    "ai diff",
+    "code review",
+    "claude code",
+    "cursor",
+    "copilot alternative",
+    "ai pair programmer",
+    "chat participant",
+    "side panel",
+    "terminal agent",
+    "mcp",
+    "llm",
+    "openai",
+    "anthropic"
   ],
   "icon": "media/icon-256.png",
   "main": "./dist/extension.js",
@@ -44,7 +61,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": true,
-      "description": "未授信工作区不启动任何 Pi 进程"
+      "description": "%untrustedWorkspaces.description%"
     },
     "virtualWorkspaces": false
   },
@@ -78,27 +95,27 @@
       "explorer": [
         {
           "id": "pi.sessions",
-          "name": "Pi 会话",
-          "contextualTitle": "Pi 会话",
+          "name": "%views.explorer.pi.sessions.name%",
+          "contextualTitle": "%views.explorer.pi.sessions.contextualTitle%",
           "visibility": "visible"
         },
         {
           "id": "pi.changes",
-          "name": "Pi 变更",
-          "contextualTitle": "Pi 变更",
+          "name": "%views.explorer.pi.changes.name%",
+          "contextualTitle": "%views.explorer.pi.changes.contextualTitle%",
           "visibility": "visible"
         },
         {
           "id": "pi.agents",
-          "name": "Pi 子代理",
-          "contextualTitle": "Pi 子代理",
+          "name": "%views.explorer.pi.agents.name%",
+          "contextualTitle": "%views.explorer.pi.agents.contextualTitle%",
           "visibility": "collapsed"
         }
       ],
       "pi-vscode": [
         {
           "id": "pi.chat",
-          "name": "对话",
+          "name": "%views.pi-vscode.pi.chat.name%",
           "type": "webview",
           "contextualTitle": "Pi",
           "visibility": "visible"
@@ -107,7 +124,7 @@
       "pi-vscode-secondary": [
         {
           "id": "pi.chatSecondary",
-          "name": "Pi 对话",
+          "name": "%views.pi-vscode-secondary.pi.chatSecondary.name%",
           "type": "webview",
           "contextualTitle": "Pi",
           "visibility": "visible"
@@ -117,258 +134,258 @@
     "viewsWelcome": [
       {
         "view": "pi.sessions",
-        "contents": "还没有 Pi 会话。\n[新建会话](command:pi.newSession)\n[恢复最近会话](command:pi.resumeSession)\n[检查运行环境](command:pi.checkEnvironment)"
+        "contents": "%viewsWelcome.pi.sessions.contents%"
       },
       {
         "view": "pi.changes",
-        "contents": "本会话还没有记录到文件改动。\n[打开变更总览](command:pi.openChangesOverview)\n[手动重新扫描](command:pi.rescanWorkspace)\n[检查运行环境](command:pi.checkEnvironment)"
+        "contents": "%viewsWelcome.pi.changes.contents%"
       },
       {
         "view": "pi.agents",
-        "contents": "本次运行还没有子代理（subagent）活动。\n[MCP 服务列表](command:pi.mcpList)"
+        "contents": "%viewsWelcome.pi.agents.contents%"
       }
     ],
     "commands": [
       {
         "command": "pi.chat.focus",
-        "title": "Pi: 聚焦聊天视图",
+        "title": "%commands.pi.chat.focus.title%",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "pi.chat.focusSecondary",
-        "title": "Pi: 在右侧栏打开 / 选中 Pi",
+        "title": "%commands.pi.chat.focusSecondary.title%",
         "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "pi.chat.askInNativeChat",
-        "title": "Pi: 在原生 Chat 里选择 @pi",
+        "title": "%commands.pi.chat.askInNativeChat.title%",
         "icon": "$(mention)"
       },
       {
         "command": "pi.newSession",
-        "title": "Pi: 新建会话",
+        "title": "%commands.pi.newSession.title%",
         "icon": "$(add)"
       },
       {
         "command": "pi.resumeSession",
-        "title": "Pi: 历史会话（浏览并恢复）",
+        "title": "%commands.pi.resumeSession.title%",
         "icon": "$(versions)"
       },
       {
         "command": "pi.newParallelSession",
-        "title": "Pi: 新开并行会话（独立进程，可同时运行）",
+        "title": "%commands.pi.newParallelSession.title%",
         "icon": "$(split-horizontal)"
       },
       {
         "command": "pi.openSessionInNewTab",
-        "title": "Pi: 在新标签中打开会话（并行运行）"
+        "title": "%commands.pi.openSessionInNewTab.title%"
       },
       {
         "command": "pi.closeParallelSession",
-        "title": "Pi: 关闭当前会话标签"
+        "title": "%commands.pi.closeParallelSession.title%"
       },
       {
         "command": "pi.switchSession",
-        "title": "Pi: 切换会话"
+        "title": "%commands.pi.switchSession.title%"
       },
       {
         "command": "pi.renameSession",
-        "title": "Pi: 重命名会话"
+        "title": "%commands.pi.renameSession.title%"
       },
       {
         "command": "pi.forkSession",
-        "title": "Pi: 从消息 fork 会话"
+        "title": "%commands.pi.forkSession.title%"
       },
       {
         "command": "pi.cloneSession",
-        "title": "Pi: 克隆当前会话"
+        "title": "%commands.pi.cloneSession.title%"
       },
       {
         "command": "pi.exportHtml",
-        "title": "Pi: 导出会话 HTML"
+        "title": "%commands.pi.exportHtml.title%"
       },
       {
         "command": "pi.sharePreview",
-        "title": "Pi: /share 预览"
+        "title": "%commands.pi.sharePreview.title%"
       },
       {
         "command": "pi.openTui",
-        "title": "Pi: 在终端中打开（TUI）",
+        "title": "%commands.pi.openTui.title%",
         "icon": "$(terminal)"
       },
       {
         "command": "pi.openChangesOverview",
-        "title": "Pi: 打开变更总览",
+        "title": "%commands.pi.openChangesOverview.title%",
         "icon": "$(list-unordered)"
       },
       {
         "command": "pi.openChangeDiff",
-        "title": "Pi: 查看该改动差异",
+        "title": "%commands.pi.openChangeDiff.title%",
         "icon": "$(diff)"
       },
       {
         "command": "pi.openTurnDiff",
-        "title": "Pi: 查看本轮全部差异"
+        "title": "%commands.pi.openTurnDiff.title%"
       },
       {
         "command": "pi.openSessionDiff",
-        "title": "Pi: 查看本会话累计差异"
+        "title": "%commands.pi.openSessionDiff.title%"
       },
       {
         "command": "pi.openExternalDir",
-        "title": "Pi: 打开工程外改动目录"
+        "title": "%commands.pi.openExternalDir.title%"
       },
       {
         "command": "pi.revealInShadow",
-        "title": "Pi: 在影子仓库中定位"
+        "title": "%commands.pi.revealInShadow.title%"
       },
       {
         "command": "pi.copyChangeContent",
-        "title": "Pi: 复制该文件内容"
+        "title": "%commands.pi.copyChangeContent.title%"
       },
       {
         "command": "pi.copyDiffPatch",
-        "title": "Pi: 复制 diff 补丁"
+        "title": "%commands.pi.copyDiffPatch.title%"
       },
       {
         "command": "pi.openFileHistoryDiff",
-        "title": "Pi: 查看当前文件历次差异",
+        "title": "%commands.pi.openFileHistoryDiff.title%",
         "icon": "$(git-compare)"
       },
       {
         "command": "pi.rescanWorkspace",
-        "title": "Pi: 手动重新扫描当前工作区"
+        "title": "%commands.pi.rescanWorkspace.title%"
       },
       {
         "command": "pi.exportSnapshotBundle",
-        "title": "Pi: 导出会话快照包"
+        "title": "%commands.pi.exportSnapshotBundle.title%"
       },
       {
         "command": "pi.clearSessionShadowData",
-        "title": "Pi: 清除本会话影子数据"
+        "title": "%commands.pi.clearSessionShadowData.title%"
       },
       {
         "command": "pi.showCostStats",
-        "title": "Pi: 跨会话成本 / 变更统计"
+        "title": "%commands.pi.showCostStats.title%"
       },
       {
         "command": "pi.applyChangeDraft",
-        "title": "Pi: 应用该改动到工作区（草稿）"
+        "title": "%commands.pi.applyChangeDraft.title%"
       },
       {
         "command": "pi.rejectChangeDraft",
-        "title": "Pi: 拒绝该改动（草稿）"
+        "title": "%commands.pi.rejectChangeDraft.title%"
       },
       {
         "command": "pi.reviewChanges",
-        "title": "Pi: 逐条审查改动（应用 / 拒绝）"
+        "title": "%commands.pi.reviewChanges.title%"
       },
       {
         "command": "pi.generateCommitMessage",
-        "title": "Pi: 生成 Git 提交信息"
+        "title": "%commands.pi.generateCommitMessage.title%"
       },
       {
         "command": "pi.toggleReviewOnSave",
-        "title": "Pi: 切换「保存文件即触发审查」"
+        "title": "%commands.pi.toggleReviewOnSave.title%"
       },
       {
         "command": "pi.bugReportWizard",
-        "title": "Pi: /bug 报告向导"
+        "title": "%commands.pi.bugReportWizard.title%"
       },
       {
         "command": "pi.mcpList",
-        "title": "Pi: MCP 服务列表"
+        "title": "%commands.pi.mcpList.title%"
       },
       {
         "command": "pi.showDiagnostics",
-        "title": "Pi: 打开诊断面板"
+        "title": "%commands.pi.showDiagnostics.title%"
       },
       {
         "command": "pi.sendSelection",
-        "title": "Pi: 发送选区"
+        "title": "%commands.pi.sendSelection.title%"
       },
       {
         "command": "pi.sendFile",
-        "title": "Pi: 发送当前文件"
+        "title": "%commands.pi.sendFile.title%"
       },
       {
         "command": "pi.sendProblems",
-        "title": "Pi: 发送 Problems 诊断"
+        "title": "%commands.pi.sendProblems.title%"
       },
       {
         "command": "pi.sendGitDiff",
-        "title": "Pi: 发送 Git 差异"
+        "title": "%commands.pi.sendGitDiff.title%"
       },
       {
         "command": "pi.sendStagedDiff",
-        "title": "Pi: 发送暂存区差异"
+        "title": "%commands.pi.sendStagedDiff.title%"
       },
       {
         "command": "pi.compact",
-        "title": "Pi: 压缩上下文"
+        "title": "%commands.pi.compact.title%"
       },
       {
         "command": "pi.selectModel",
-        "title": "Pi: 选择模型"
+        "title": "%commands.pi.selectModel.title%"
       },
       {
         "command": "pi.selectThinkingLevel",
-        "title": "Pi: 选择思考级别"
+        "title": "%commands.pi.selectThinkingLevel.title%"
       },
       {
         "command": "pi.abort",
-        "title": "Pi: 中断",
+        "title": "%commands.pi.abort.title%",
         "icon": "$(debug-stop)"
       },
       {
         "command": "pi.clearQueue",
-        "title": "Pi: 取回排队消息"
+        "title": "%commands.pi.clearQueue.title%"
       },
       {
         "command": "pi.showStatus",
-        "title": "Pi: 显示状态 / 用量"
+        "title": "%commands.pi.showStatus.title%"
       },
       {
         "command": "pi.setSteeringMode",
-        "title": "Pi: 设置 steer 模式"
+        "title": "%commands.pi.setSteeringMode.title%"
       },
       {
         "command": "pi.setFollowUpMode",
-        "title": "Pi: 设置 follow-up 模式"
+        "title": "%commands.pi.setFollowUpMode.title%"
       },
       {
         "command": "pi.switchActiveSession",
-        "title": "Pi: 切换会话标签（并行会话）",
+        "title": "%commands.pi.switchActiveSession.title%",
         "icon": "$(list-selection)"
       },
       {
         "command": "pi.openTurnEditDiff",
-        "title": "Pi: 查看最近一轮改动（原生差异）",
+        "title": "%commands.pi.openTurnEditDiff.title%",
         "icon": "$(diff)"
       },
       {
         "command": "pi.openSessionEditDiff",
-        "title": "Pi: 查看本会话全部改动（原生差异）",
+        "title": "%commands.pi.openSessionEditDiff.title%",
         "icon": "$(git-compare)"
       },
       {
         "command": "pi.pickTurnDiff",
-        "title": "Pi: 历史变更（按对话轮次查看改动）…",
+        "title": "%commands.pi.pickTurnDiff.title%",
         "icon": "$(diff-multiple)"
       },
       {
         "command": "pi.checkEnvironment",
-        "title": "Pi: 检查运行环境",
+        "title": "%commands.pi.checkEnvironment.title%",
         "icon": "$(shield)"
       },
       {
         "command": "pi.restartPi",
-        "title": "Pi: 重启 Pi 进程",
+        "title": "%commands.pi.restartPi.title%",
         "icon": "$(debug-restart)"
       },
       {
         "command": "pi.openDocs",
-        "title": "Pi: 打开 Pi 文档"
+        "title": "%commands.pi.openDocs.title%"
       }
     ],
     "menus": {
@@ -608,22 +625,22 @@
         "pi.executablePath": {
           "type": "string",
           "default": "",
-          "description": "pi 启动器或 node 路径；为空时自动探测"
+          "description": "%config.pi.executablePath.description%"
         },
         "pi.cliEntryPath": {
           "type": "string",
           "default": "",
-          "description": "pi 的 dist/bundle/cli.js；为空时自动探测"
+          "description": "%config.pi.cliEntryPath.description%"
         },
         "pi.nodePath": {
           "type": "string",
           "default": "",
-          "description": "运行 pi 的 node.exe（Windows 优先）"
+          "description": "%config.pi.nodePath.description%"
         },
         "pi.model": {
           "type": "string",
           "default": "",
-          "description": "provider/modelId；为空时沿用 Pi 默认模型"
+          "description": "%config.pi.model.description%"
         },
         "pi.thinkingLevel": {
           "type": "string",
@@ -641,18 +658,18 @@
         "pi.enableTui": {
           "type": "boolean",
           "default": true,
-          "description": "是否启用「在终端中打开」TUI 入口（false 时菜单/斜杠命令/会话树入口一并隐藏）"
+          "description": "%config.pi.enableTui.description%"
         },
         "pi.multiSession": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "已废弃：并行会话现在始终可用（会话标签栏 ＋ / `Pi: 新开并行会话`），此设置不再生效。",
-          "deprecationMessage": "并行会话现在始终可用，此设置不再生效。"
+          "markdownDescription": "%config.pi.multiSession.markdownDescription%",
+          "deprecationMessage": "%config.pi.multiSession.deprecationMessage%"
         },
         "pi.reviewOnSave.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "P2：保存文件后自动让 Pi 审查"
+          "description": "%config.pi.reviewOnSave.enabled.description%"
         },
         "pi.reviewOnSave.debounceMs": {
           "type": "number",
@@ -695,7 +712,7 @@
             "all"
           ],
           "default": "explicitWrites",
-          "description": "工程外记录策略：explicitWrites=仅工具显式写入（推荐），allowlistOnly=仅白名单，all=全部候选"
+          "description": "%config.pi.shadowGit.externalPolicy.description%"
         },
         "pi.shadowGit.externalAllowlist": {
           "type": "array",
@@ -703,7 +720,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "额外允许快照的工程外根目录（绝对路径）"
+          "description": "%config.pi.shadowGit.externalAllowlist.description%"
         },
         "pi.shadowGit.maxFileBytes": {
           "type": "number",
@@ -730,7 +747,7 @@
         "pi.shadowGit.redactSecrets": {
           "type": "boolean",
           "default": true,
-          "description": "疑似密钥文件只记录路径 + 大小 + sha256 摘要，不存原文"
+          "description": "%config.pi.shadowGit.redactSecrets.description%"
         },
         "pi.shadowGit.snapshotMode": {
           "type": "string",
@@ -738,7 +755,7 @@
             "settled"
           ],
           "default": "settled",
-          "markdownDescription": "**已废弃**：影子仓库固定为「一轮对话一次提交」，无论此处取值如何都不会再按文件/工具重复提交。保留该键仅为兼容旧设置。"
+          "markdownDescription": "%config.pi.shadowGit.snapshotMode.markdownDescription%"
         },
         "pi.shadowGit.baseMode": {
           "type": "string",
@@ -748,12 +765,12 @@
             "candidatesOnly"
           ],
           "default": "auto",
-          "description": "base 快照范围；auto=尝试全量，超过大小上限自动降级为仅候选"
+          "description": "%config.pi.shadowGit.baseMode.description%"
         },
         "pi.shadowGit.usePiExtension": {
           "type": "boolean",
           "default": true,
-          "description": "自动注入 --extension shadow-snapshot.ts；失败时降级到 L1+L3"
+          "description": "%config.pi.shadowGit.usePiExtension.description%"
         },
         "pi.shadowGit.retentionDays": {
           "type": "number",
@@ -766,7 +783,7 @@
         "pi.showDiagnosticsOnError": {
           "type": "boolean",
           "default": true,
-          "description": "Pi 进程启动失败时自动打开诊断面板"
+          "description": "%config.pi.showDiagnosticsOnError.description%"
         }
       }
     },
@@ -816,24 +833,24 @@
         "id": "pi-vscode.pi",
         "name": "pi",
         "fullName": "Pi",
-        "description": "让 Pi coding agent 读写代码（与侧栏共享会话）",
+        "description": "%chatParticipants.pi-vscode.pi.description%",
         "isSticky": true,
         "commands": [
           {
             "name": "model",
-            "description": "切换模型"
+            "description": "%chatParticipants.pi-vscode.pi.commands.model.description%"
           },
           {
             "name": "diff",
-            "description": "用原生差异查看本会话改动"
+            "description": "%chatParticipants.pi-vscode.pi.commands.diff.description%"
           },
           {
             "name": "new",
-            "description": "新建 Pi 会话"
+            "description": "%chatParticipants.pi-vscode.pi.commands.new.description%"
           },
           {
             "name": "compact",
-            "description": "压缩上下文"
+            "description": "%chatParticipants.pi-vscode.pi.commands.compact.description%"
           }
         ]
       }

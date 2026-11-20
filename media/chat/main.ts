@@ -1,5 +1,6 @@
 import { esc, renderMarkdown, renderMessage, renderPatch, toolSummary } from './render';
 import { copyText, htmlFromElement } from './clipboard';
+import { l10n } from './i18n';
 
 declare const acquireVsCodeApi: () => {
   postMessage(msg: unknown): void;
@@ -79,17 +80,17 @@ function renderTabs(): void {
   el.hidden = tabs.length < 2;
   if (el.hidden) { el.innerHTML = ''; return; }
   const multiFolder = new Set(tabs.map((t) => t.folder ?? '')).size > 1;
-  el.innerHTML = tabs.map((t) => {
-    const cur = t.key === activeTab;
-    const state = t.streaming ? '<span class="spin tab-spin" title="运行中"></span>'
-      : t.status === 'error' ? '<span class="tab-err" title="Pi 进程不可用">!</span>'
-      : t.unread ? '<span class="tab-dot" title="有新结果"></span>' : '';
-    const tip = `${t.label}${multiFolder && t.folder ? ` · ${t.folder}` : ''}${t.streaming ? ' · 运行中' : ''}
-中键或 × 关闭（会停止该会话的 Pi 进程）`;
-    return `<div class="tab ${cur ? 'cur' : ''}" role="tab" aria-selected="${cur}" data-tab="${esc(t.key)}" title="${esc(tip)}">
-      ${state}<span class="tab-label">${esc(t.label)}</span>
-      <button type="button" class="tab-x" data-tab-close="${esc(t.key)}" title="关闭标签" aria-label="关闭">×</button></div>`;
-  }).join('') + '<button type="button" class="tab-add" data-tab-add title="新开并行会话（独立 Pi 进程，可同时运行）" aria-label="新开并行会话">＋</button>';
+  el.innerHTML = tabs.map((tab) => {
+    const cur = tab.key === activeTab;
+    const state = tab.streaming ? `<span class="spin tab-spin" title="${l10n('webview.running')}"></span>`
+      : tab.status === 'error' ? `<span class="tab-err" title="${l10n('webview.processUnavailable')}">!</span>`
+      : tab.unread ? `<span class="tab-dot" title="${l10n('webview.newResult')}"></span>` : '';
+    const tip = `${tab.label}${multiFolder && tab.folder ? ` · ${tab.folder}` : ''}${tab.streaming ? l10n('webview.runningDot') : ''}\n${l10n('webview.middleClickCloseStops')}`;
+    const close = l10n('webview.close');
+    return `<div class="tab ${cur ? 'cur' : ''}" role="tab" aria-selected="${cur}" data-tab="${esc(tab.key)}" title="${esc(tip)}">
+      ${state}<span class="tab-label">${esc(tab.label)}</span>
+      <button type="button" class="tab-x" data-tab-close="${esc(tab.key)}" title="${l10n('webview.closeTab')}" aria-label="${close}">×</button></div>`;
+  }).join('') + `<button type="button" class="tab-add" data-tab-add title="${l10n('webview.newParallelSessionOwn')}" aria-label="${l10n('webview.newParallelSession')}">＋</button>`;
 }
 
 function onSessions(list: SessionTab[], active: string): void {
@@ -114,11 +115,11 @@ function onSessions(list: SessionTab[], active: string): void {
 /** Session header: makes the history entry explicit instead of an ambiguous 🕘 icon. */
 function renderSessionBar(): void {
   const label = $('history-label');
-  label.textContent = historyCount > 0 ? `历史会话 ${historyCount}` : historyCount === 0 ? '历史会话' : '历史会话';
+  label.textContent = historyCount > 0 ? l10n('webview.history', historyCount) : l10n('webview.history2');
   const btn = $('history') as HTMLButtonElement;
   btn.title = historyCount >= 0
-    ? `从 ~/.pi/agent/sessions 浏览并恢复会话（已发现 ${historyCount} 个）`
-    : '浏览并恢复历史会话';
+    ? l10n('webview.browseResumeSessionsAgent', historyCount)
+    : l10n('webview.browseResumePastSessions');
   btn.classList.toggle('empty-history', historyCount === 0);
   const name = $('session-label');
   const text = currentSession.name || (currentSession.id ? currentSession.id.slice(0, 12) : '');
@@ -158,11 +159,11 @@ function renderSessionChanges(): void {
   $('sc-files').innerHTML = files.map((f) => {
     const dir = dirOf(f.display);
     const name = f.display.slice(dir.length);
-    return `<div class="sc-file" data-sc-key="${esc(f.key)}" title="${esc(f.display)} · 点击查看本会话累计差异">
+    return `<div class="sc-file" data-sc-key="${esc(f.key)}" title="${esc(f.display)} · ${l10n('webview.clickShowSessionS')}">
     <span class="sc-glyph st-${f.status}">${statusGlyph(f.status)}</span>
     <span class="sc-name">${esc(dir)}<span class="sc-base">${esc(name)}</span></span>
     <span class="spacer"></span>
-    ${f.approximate ? '<span class="muted" title="前像不完整">≈</span>' : ''}
+    ${f.approximate ? `<span class="muted" title="${l10n('webview.partialBeforeImage')}">≈</span>` : ''}
     <span class="stat">${f.added ? `<span class="add">+${f.added}</span>` : ''}${f.removed ? `<span class="del"> -${f.removed}</span>` : ''}</span>
   </div>`;
   }).join('');
@@ -215,21 +216,23 @@ function fileName(p: string): string { return p.split(/[\\/]/).pop() || p; }
 function renderTool(item: Item): string {
   const name = item.toolName ?? 'tool';
   const isEdit = name === 'edit' || name === 'write';
-  const state = item.streaming ? '<span class="spin"></span>' : item.isError ? '<span class="bad">失败</span>' : '';
+  const state = item.streaming ? '<span class="spin"></span>' : item.isError ? `<span class="bad">${l10n('webview.failed')}</span>` : '';
   const dur = item.durationMs && !item.streaming ? `<span class="muted">${item.durationMs < 1000 ? `${item.durationMs}ms` : `${(item.durationMs / 1000).toFixed(1)}s`}</span>` : '';
   if (isEdit && !item.isError) {
     const e = item.edit;
     const p = e?.path || String((item.args as any)?.path ?? '');
-    const verb = name === 'write' ? (e && e.removed === 0 ? '创建' : '写入') : '编辑';
+    const verb = name === 'write'
+      ? (e && e.removed === 0 ? l10n('webview.created') : l10n('webview.wrote'))
+      : l10n('webview.edited');
     const counts = e ? stat(e.added, e.removed) : '';
     const preview = e?.patch && !collapsed[item.id] ? renderPatch(e.patch, 30) : '';
     return `<div class="msg tool edit" data-id="${esc(item.id)}">
-      <div class="edit-head" data-tool-diff="${esc(item.id)}" data-path="${esc(p)}" title="点击用 VS Code 原生差异查看">
+      <div class="edit-head" data-tool-diff="${esc(item.id)}" data-path="${esc(p)}" title="${l10n('webview.clickOpenNativeVs')}">
         <span class="ico">${name === 'write' ? '📄' : '✎'}</span><span class="verb">${verb}</span>
         <span class="fname">${esc(fileName(p))}</span><span class="fdir muted">${esc(p)}</span>
         ${counts}${state}<span class="spacer"></span>
-        <button type="button" class="diff-btn" data-tool-diff="${esc(item.id)}" data-path="${esc(p)}">查看差异</button>
-        ${e?.patch ? `<button type="button" class="icon-mini" data-toggle="${esc(item.id)}" title="${collapsed[item.id] ? '展开预览' : '收起预览'}">${collapsed[item.id] ? '▸' : '▾'}</button>` : ''}
+        <button type="button" class="diff-btn" data-tool-diff="${esc(item.id)}" data-path="${esc(p)}">${l10n('webview.showDiff')}</button>
+        ${e?.patch ? `<button type="button" class="icon-mini" data-toggle="${esc(item.id)}" title="${collapsed[item.id] ? l10n('webview.expandPreview') : l10n('webview.collapsePreview')}">${collapsed[item.id] ? '▸' : '▾'}</button>` : ''}
       </div>${preview}</div>`;
   }
   const result = item.result === undefined ? '' : resultText(item.result);
@@ -238,25 +241,25 @@ function renderTool(item: Item): string {
   return `<div class="msg tool ${item.isError ? 'error' : ''}" data-id="${esc(item.id)}">
     <details ${open ? 'open' : ''} data-collapse="${esc(item.id)}">
       <summary><span class="tname">${esc(name)}</span><span class="targs">${esc(summary)}</span><span class="spacer"></span>${state}${dur}</summary>
-      ${result ? `<pre class="tool-out">${esc(result)}</pre><div class="tool-actions"><button type="button" data-copy-result="${esc(item.id)}">复制输出</button><button type="button" data-open-result="${esc(item.id)}">在编辑器中打开</button></div>` : ''}
+      ${result ? `<pre class="tool-out">${esc(result)}</pre><div class="tool-actions"><button type="button" data-copy-result="${esc(item.id)}">${l10n('webview.copyOutput')}</button><button type="button" data-open-result="${esc(item.id)}">${l10n('webview.openEditor')}</button></div>` : ''}
     </details></div>`;
 }
 
 function resultText(r: unknown): string {
   if (typeof r === 'string') return r;
   const c = (r as any)?.content;
-  if (Array.isArray(c)) return c.map((b: any) => (b?.type === 'text' ? b.text ?? '' : b?.type === 'image' ? '[图片]' : '')).join('');
+  if (Array.isArray(c)) return c.map((b: any) => (b?.type === 'text' ? b.text ?? '' : b?.type === 'image' ? l10n('webview.image') : '')).join('');
   try { return JSON.stringify(r, null, 2); } catch { return String(r); }
 }
 
 function renderChanges(item: Item): string {
   const s = item.changes!;
-  const rows = s.files.map((f) => `<div class="cf" data-turn-file="${esc(s.turnId)}" data-key="${esc(f.key)}" title="${esc(f.display)} — 点击查看差异">
+  const rows = s.files.map((f) => `<div class="cf" data-turn-file="${esc(s.turnId)}" data-key="${esc(f.key)}" title="${esc(f.display)} — ${l10n('webview.clickShowDiff')}">
       <span class="st st-${f.status}">${f.status}</span><span class="fname">${esc(fileName(f.display))}</span><span class="fdir muted">${esc(f.display)}</span>
-      <span class="spacer"></span>${f.approximate ? '<span class="muted" title="未能取得修改前内容">≈</span>' : ''}${stat(f.added, f.removed)}</div>`).join('');
+      <span class="spacer"></span>${f.approximate ? `<span class="muted" title="${l10n('webview.beforeImageUnavailable')}">≈</span>` : ''}${stat(f.added, f.removed)}</div>`).join('');
   return `<div class="msg changes" data-id="${esc(item.id)}">
-    <div class="changes-head"><span>${s.files.length} 个文件已更改</span>${stat(s.added, s.removed)}${s.aborted ? '<span class="bad">已中断</span>' : ''}<span class="spacer"></span>
-      <button type="button" class="diff-btn primary" data-turn-diff="${esc(s.turnId)}">查看本轮差异</button></div>
+    <div class="changes-head"><span>${l10n('webview.fileSChanged', s.files.length)}</span>${stat(s.added, s.removed)}${s.aborted ? `<span class="bad">${l10n('webview.aborted')}</span>` : ''}<span class="spacer"></span>
+      <button type="button" class="diff-btn primary" data-turn-diff="${esc(s.turnId)}">${l10n('webview.showTurnSDiff')}</button></div>
     <div class="changes-files">${rows}</div></div>`;
 }
 
@@ -270,7 +273,7 @@ function renderItem(item: Item): string {
   }
   return `<div class="msg ${esc(item.role)} ${item.streaming ? 'streaming' : ''}" data-id="${esc(item.id)}">
     <div class="md">${body}</div>
-    ${item.streaming ? '' : `<div class="msg-actions"><button type="button" class="icon-mini" data-copy-item="${esc(item.id)}" title="复制">⧉</button></div>`}</div>`;
+    ${item.streaming ? '' : `<div class="msg-actions"><button type="button" class="icon-mini" data-copy-item="${esc(item.id)}" title="${l10n('webview.copy')}">⧉</button></div>`}</div>`;
 }
 
 function updateEmpty(): void { $('empty').hidden = items.length > 0; }
@@ -334,14 +337,18 @@ function refreshSend(): void {
   const stop = streaming && !hasDraft();
   sendBtn.classList.toggle('stop', stop);
   sendBtn.textContent = stop ? '■' : '↑';
-  sendBtn.title = stop ? '终止当前任务' : streaming ? '加入下一个任务（当前任务完成后自动发送）' : '发送 (Enter)';
-  sendBtn.setAttribute('aria-label', stop ? '终止' : '发送');
+  sendBtn.title = stop
+    ? l10n('webview.abortCurrentTask')
+    : streaming
+      ? l10n('webview.queueNextTaskSent')
+      : l10n('webview.sendEnter');
+  sendBtn.setAttribute('aria-label', stop ? l10n('webview.abort') : l10n('webview.send'));
   sendBtn.disabled = !stop && !hasDraft();
 }
 
 function renderAttachments(): void {
   attachmentsEl.hidden = images.length === 0;
-  attachmentsEl.innerHTML = images.map((img, i) => `<div class="att"><img src="data:${esc(img.mimeType)};base64,${esc(img.data)}" alt=""><button type="button" data-rm-img="${i}" title="移除">×</button></div>`).join('');
+  attachmentsEl.innerHTML = images.map((img, i) => `<div class="att"><img src="data:${esc(img.mimeType)};base64,${esc(img.data)}" alt=""><button type="button" data-rm-img="${i}" title="${l10n('webview.remove')}">×</button></div>`).join('');
   refreshSend();
 }
 
@@ -381,13 +388,13 @@ function submit(): void {
 
 function renderTasks(local: Array<{ id: string; text: string; images: number }>, pending: Array<{ id: string; text: string; kind: string }>): void {
   const rows = [
-    ...pending.map((t) => `<div class="task pending"><span class="tlabel">${t.kind === 'steer' ? '即将插入' : '排队中'}</span><span class="ttext">${esc(t.text)}</span><span class="spacer"></span><button type="button" class="icon-mini" data-clear-pi-queue title="取回到输入框">↩</button></div>`),
-    ...local.map((t, i) => `<div class="task" data-task="${esc(t.id)}">
-      <span class="tlabel">${i === 0 ? '下一个任务' : `任务 ${i + 1}`}</span>
-      <span class="ttext" title="${esc(t.text)}">${esc(t.text)}${t.images ? ` <span class="muted">[${t.images} 图]</span>` : ''}</span><span class="spacer"></span>
-      <button type="button" class="now-btn" data-task-now="${esc(t.id)}" title="立即发送：插入到当前任务，在下一次模型调用前生效">立即发送</button>
-      <button type="button" class="icon-mini" data-task-edit="${esc(t.id)}" title="编辑">✎</button>
-      <button type="button" class="icon-mini" data-task-rm="${esc(t.id)}" title="删除">×</button></div>`),
+    ...pending.map((p) => `<div class="task pending"><span class="tlabel">${p.kind === 'steer' ? l10n('webview.inserting') : l10n('webview.queued')}</span><span class="ttext">${esc(p.text)}</span><span class="spacer"></span><button type="button" class="icon-mini" data-clear-pi-queue title="${l10n('webview.takeBackComposer')}">↩</button></div>`),
+    ...local.map((task, i) => `<div class="task" data-task="${esc(task.id)}">
+      <span class="tlabel">${i === 0 ? l10n('webview.nextTask') : l10n('webview.task', i + 1)}</span>
+      <span class="ttext" title="${esc(task.text)}">${esc(task.text)}${task.images ? ` <span class="muted">${l10n('webview.imageS', task.images)}</span>` : ''}</span><span class="spacer"></span>
+      <button type="button" class="now-btn" data-task-now="${esc(task.id)}" title="${l10n('webview.sendNowInjectRunning')}">${l10n('webview.sendNow')}</button>
+      <button type="button" class="icon-mini" data-task-edit="${esc(task.id)}" title="${l10n('webview.edit')}">✎</button>
+      <button type="button" class="icon-mini" data-task-rm="${esc(task.id)}" title="${l10n('webview.delete')}">×</button></div>`),
   ];
   tasksEl.hidden = rows.length === 0;
   tasksEl.innerHTML = rows.join('');
@@ -396,13 +403,13 @@ function renderTasks(local: Array<{ id: string; text: string; images: number }>,
 // ------------------------------------------------------------- model menu
 
 function shortModel(m: { id?: string; name?: string }): string {
-  return m.name?.trim() || m.id || '模型';
+  return m.name?.trim() || m.id || l10n('webview.model');
 }
 
 function renderModelButton(): void {
   $('model-name').textContent = shortModel(currentModel);
   $('model-level').textContent = currentLevel ? capitalize(currentLevel) : '';
-  modelBtn.title = `${currentModel.provider ?? ''}/${currentModel.id ?? ''} · 思考 ${currentLevel || '-'}\n点击切换模型 / 思考级别`;
+  modelBtn.title = l10n('webview.thinkingClickSwitchModel', currentModel.provider ?? '', currentModel.id ?? '', currentLevel || '-');
 }
 
 function capitalize(s: string): string { return s ? s[0].toUpperCase() + s.slice(1) : s; }
@@ -412,12 +419,12 @@ function renderModelMenu(): void {
   const modelRows = models.length
     ? models.map((m) => `<div class="mi ${isCur(m) ? 'cur' : ''}" role="option" data-pick-model="${esc(`${m.provider}/${m.id}`)}">
         <span class="check">${isCur(m) ? '✓' : ''}</span><span class="mname">${esc(shortModel(m))}</span>
-        <span class="mmeta muted">${esc([m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k` : '', m.input?.includes('image') ? '图' : ''].filter(Boolean).join(' · '))}</span></div>`).join('')
-    : '<div class="mi muted">正在加载模型…</div>';
+        <span class="mmeta muted">${esc([m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k` : '', m.input?.includes('image') ? l10n('webview.img') : ''].filter(Boolean).join(' · '))}</span></div>`).join('')
+    : `<div class="mi muted">${l10n('webview.loadingModels')}</div>`;
   const levelRows = levels.length
-    ? `<div class="msep">思考级别</div><div class="levels">${levels.map((l) => `<button type="button" class="lv ${l === currentLevel ? 'cur' : ''}" data-pick-level="${esc(l)}">${esc(capitalize(l))}</button>`).join('')}</div>`
+    ? `<div class="msep">${l10n('webview.thinkingLevel')}</div><div class="levels">${levels.map((l) => `<button type="button" class="lv ${l === currentLevel ? 'cur' : ''}" data-pick-level="${esc(l)}">${esc(capitalize(l))}</button>`).join('')}</div>`
     : '';
-  modelMenu.innerHTML = `<div class="msep">模型</div><div class="mlist">${modelRows}</div>${levelRows}<div class="mfoot"><button type="button" class="link-btn" data-model-default>设为默认…</button></div>`;
+  modelMenu.innerHTML = `<div class="msep">${l10n('webview.model')}</div><div class="mlist">${modelRows}</div>${levelRows}<div class="mfoot"><button type="button" class="link-btn" data-model-default>${l10n('webview.setDefault')}</button></div>`;
 }
 
 function toggleModelMenu(show?: boolean): void {
@@ -441,7 +448,7 @@ window.addEventListener('message', (event: MessageEvent) => {
       }
       if (typeof msg.streaming === 'boolean') {
         streaming = msg.streaming;
-        $('activity').textContent = streaming ? '运行中…' : '空闲';
+        $('activity').textContent = streaming ? l10n('webview.running3') : l10n('webview.idle');
         document.body.classList.toggle('busy', streaming);
         refreshSend();
       }
@@ -460,7 +467,9 @@ window.addEventListener('message', (event: MessageEvent) => {
       }
       renderModelButton();
       const st = msg.stats;
-      $('usage').textContent = st ? `${st.contextUsage?.percent != null ? `上下文 ${Math.round(st.contextUsage.percent)}%` : ''}${st.cost ? ` · $${st.cost.toFixed(3)}` : ''}` : '';
+      $('usage').textContent = st
+        ? `${st.contextUsage?.percent != null ? l10n('webview.context', Math.round(st.contextUsage.percent)) : ''}${st.cost ? ` · $${st.cost.toFixed(3)}` : ''}`
+        : '';
       if (Array.isArray(msg.widgets)) widgets.textContent = msg.widgets.join('\n');
       break;
     }
@@ -479,10 +488,10 @@ window.addEventListener('message', (event: MessageEvent) => {
     case 'title': document.title = msg.title ?? 'Pi'; break;
     case 'banner': renderBanner(msg); break;
     case 'toast': toast(String(msg.text ?? ''), msg.level === 'error' ? 'error' : 'info'); break;
-    case 'activity': $('activity').textContent = msg.text || (streaming ? '运行中…' : '空闲'); break;
+    case 'activity': $('activity').textContent = msg.text || (streaming ? l10n('webview.running3') : l10n('webview.idle')); break;
     case 'streaming':
       streaming = !!msg.value;
-      $('activity').textContent = streaming ? '运行中…' : (msg.aborted ? '已终止' : '空闲');
+      $('activity').textContent = streaming ? l10n('webview.running3') : (msg.aborted ? l10n('webview.aborted2') : l10n('webview.idle'));
       document.body.classList.toggle('busy', streaming);
       refreshSend();
       break;
@@ -632,7 +641,8 @@ document.addEventListener('click', (e: MouseEvent) => {
   if (code) {
     const raw = code.closest('.code-block')?.querySelector('pre code')?.textContent ?? '';
     copyText(raw, `<pre>${esc(raw)}</pre>`);
-    code.textContent = '已复制'; setTimeout(() => { code.textContent = '复制'; }, 1200);
+    code.textContent = l10n('webview.copied');
+    setTimeout(() => { code.textContent = l10n('webview.copy'); }, 1200);
     return;
   }
   const copyItem = q('[data-copy-item]');

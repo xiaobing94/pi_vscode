@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { Config } from '../core/Config';
+import { LOCALE, l10n } from '../core/I18n';
 import type { Log } from '../core/Log';
 import { JsonlDecoder, encodeJsonLine } from './Jsonl';
 import type { PiRuntime, Resolver } from './Resolver';
@@ -114,12 +115,18 @@ export class RpcGateway implements vscode.Disposable {
     this.stopping = false;
     if (!vscode.workspace.isTrusted) {
       this.log.warn('Workspace is not trusted; refusing to spawn pi (§4.6).');
-      this.setState({ status: 'error', error: '工作区未授信：未启动 Pi。请先信任此工作区。' });
+      this.setState({
+        status: 'error',
+        error: l10n('gateway.workspaceTrustedStartedTrust'),
+      });
       return false;
     }
     const runtime = await this.resolver.resolve();
     if (!runtime) {
-      this.setState({ status: 'error', error: '未找到 Pi CLI（需要 >= 1.5.2）。请在设置中配置 pi.nodePath / pi.cliEntryPath。' });
+      this.setState({
+        status: 'error',
+        error: l10n('gateway.cliFound15'),
+      });
       return false;
     }
     this.setState({ status: this.restartAttempts ? 'reconnecting' : 'starting', runtime, error: undefined });
@@ -142,6 +149,7 @@ export class RpcGateway implements vscode.Disposable {
       ...(runtime.env ?? {}),
       ...this.ipcEnv,
       PI_VSCODE_RPC: '1',
+      PI_VSCODE_LOCALE: LOCALE,
       GIT_CONFIG_NOSYSTEM: '1',
       PI_VSCODE_EXTENSION_ROOT: path.dirname(path.dirname(runtime.extensionPath ?? __filename)),
     };
@@ -156,7 +164,7 @@ export class RpcGateway implements vscode.Disposable {
       });
     } catch (err) {
       this.log.error('spawn pi failed', err);
-      this.setState({ status: 'error', error: `启动 Pi 失败: ${String(err)}` });
+      this.setState({ status: 'error', error: l10n('gateway.failedStart', String(err)) });
       return false;
     }
     this.child = child;
@@ -183,7 +191,7 @@ export class RpcGateway implements vscode.Disposable {
     child.on('exit', (code, signal) => {
       this.log.warn(`pi exited (code=${code}, signal=${signal})`);
       this.child = undefined;
-      this.failPending(new Error(`Pi 已退出 (code=${code}, signal=${signal})`));
+      this.failPending(new Error(l10n('gateway.exitedCodeSignal', String(code), String(signal))));
       if (!this.stopping && !this.killedByUs) this.scheduleRestart();
       else if (!this.stopping) this.setState({ status: 'stopped' });
     });
@@ -230,7 +238,7 @@ export class RpcGateway implements vscode.Disposable {
       this.pending.delete(id);
       clearTimeout(p.timer);
       if (r.success) p.resolve(r.data);
-      else p.reject(new Error(`pi ${r.command} 失败: ${r.error ?? 'unknown error'}`));
+      else p.reject(new Error(l10n('gateway.failed', r.command, r.error ?? 'unknown error')));
       return;
     }
     const event = value as AgentEvent;
@@ -243,13 +251,13 @@ export class RpcGateway implements vscode.Disposable {
   async send<T = any>(command: RpcCommand, timeoutMs = this.timeoutMs): Promise<T> {
     if (!this.child?.stdin.writable) {
       const ok = await this.start();
-      if (!ok) throw new Error(this.state.error ?? 'Pi 子进程未就绪');
+      if (!ok) throw new Error(this.state.error ?? l10n('gateway.subprocessReady'));
     }
     const withId = { ...command, id: randomUUID() } as RpcCommand & { id: string };
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(withId.id);
-        reject(new Error(`pi ${String(command.type)} 超时 (${timeoutMs}ms)`));
+        reject(new Error(l10n('gateway.timedAfterMs', String(command.type), timeoutMs)));
       }, timeoutMs);
       this.pending.set(withId.id, { resolve, reject, timer, command: String(command.type) });
       void this.writeRaw(withId).catch((err) => {
@@ -261,7 +269,7 @@ export class RpcGateway implements vscode.Disposable {
 
   private async writeRaw(value: unknown): Promise<void> {
     const stdin = this.child?.stdin;
-    if (!stdin?.writable) throw new Error('Pi stdin 不可写');
+    if (!stdin?.writable) throw new Error(l10n('gateway.stdinWritable'));
     const line = encodeJsonLine(value);
     if (!stdin.write(line, 'utf8')) {
       await new Promise<void>((resolve) => {
@@ -285,7 +293,10 @@ export class RpcGateway implements vscode.Disposable {
     if (this.stopping || this.disposed || this.restartTimer) return;
     const delay = Math.min(30_000, 500 * 2 ** Math.min(this.restartAttempts, 6));
     this.restartAttempts += 1;
-    this.setState({ status: 'reconnecting', error: `Pi 已退出，${delay}ms 后重连（第 ${this.restartAttempts} 次）` });
+    this.setState({
+      status: 'reconnecting',
+      error: l10n('gateway.exitedReconnectingMsAttempt', delay, this.restartAttempts),
+    });
     this.restartTimer = setTimeout(() => {
       this.restartTimer = undefined;
       void this.start();
@@ -342,7 +353,7 @@ export class RpcGateway implements vscode.Disposable {
         execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true }, () => {});
       }
     }
-    this.failPending(new Error('Pi 已停止'));
+    this.failPending(new Error(l10n('gateway.stopped')));
     this.child = undefined;
     this.stopping = false;
     this.setState({ status: 'stopped' });
@@ -366,7 +377,7 @@ export class RpcGateway implements vscode.Disposable {
       }
     }
     this.child = undefined;
-    this.failPending(new Error('Pi 已停止'));
+    this.failPending(new Error(l10n('gateway.stopped')));
     this.setState({ status: 'stopped' });
     for (const d of this.disposables) d.dispose();
     this.listeners.clear();

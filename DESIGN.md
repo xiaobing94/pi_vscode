@@ -1,4 +1,4 @@
-# Pi — Agent with Shadow Git — 设计文档
+# Pi Shadow Agent — 设计文档
 
 | 项 | 值 |
 |---|---|

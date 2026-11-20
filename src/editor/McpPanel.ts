@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
+import { l10n, lang } from '../core/I18n';
 import type { Log } from '../core/Log';
 import type { Config } from '../core/Config';
 import type { Resolver } from '../pi/Resolver';
@@ -28,11 +29,11 @@ export class McpPanel {
 
   async show(): Promise<void> {
     const data = await this.list();
-    const panel = vscode.window.createWebviewPanel('pi.mcp', 'Pi: MCP 服务', vscode.ViewColumn.Beside, { enableScripts: false });
+    const panel = vscode.window.createWebviewPanel('pi.mcp', l10n('mcp.mcpServers'), vscode.ViewColumn.Beside, { enableScripts: false });
     const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c));
-    panel.webview.html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>Pi MCP</title>
+    panel.webview.html = `<!doctype html><html lang="${lang()}"><meta charset="utf-8"><title>Pi MCP</title>
 <style>body{font-family:var(--vscode-font-family);padding:16px;color:var(--vscode-foreground);user-select:text}pre{white-space:pre-wrap;background:var(--vscode-textBlockQuote-background);padding:12px}</style>
-<h1>Pi: MCP 服务列表</h1><p>命令：<code>pi mcp list --json</code>（只读）</p><pre>${esc(JSON.stringify(data, null, 2))}</pre></html>`;
+<h1>Pi: MCP</h1><p><code>pi mcp list --json</code></p><pre>${esc(JSON.stringify(data, null, 2))}</pre></html>`;
     void this.config;
   }
 
@@ -45,7 +46,9 @@ export class McpPanel {
         item.iconPath = new vscode.ThemeIcon('robot');
         return item;
       },
-      getChildren: () => events().map((e) => ({ id: `${e.label} · ${e.toolCalls} 次工具调用` })),
+      getChildren: () => events().map((e) => ({
+        id: l10n('mcp.toolCallS', e.label, e.toolCalls),
+      })),
       dispose: () => emitter.dispose(),
     };
   }

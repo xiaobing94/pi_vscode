@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { ChangeNode } from './ChangeTree';
@@ -26,7 +27,7 @@ export class DiffCommands {
     if (!c) { void this.deps.openOverview(); return; }
     const service = this.deps.snapshots();
     if (!service) return;
-    const title = `${path.basename(c.displayPath)} · 第 ${c.turnIndex} 轮 ${c.scope === 'external' ? '⚠ 工程外 ' : ''}(旧 ↔ 新)`;
+    const title = l10n('diff.turnOldNew', path.basename(c.displayPath), c.turnIndex, c.scope === 'external' ? '⚠ outside workspace ' : '');
     const side = (commit: string | undefined, missing: boolean) => ShadowDocProvider.uri(service.currentSessionKey, commit, c.path, commit === c.commit ? 'new' : 'old', missing);
     const left = side(c.parent, c.status === 'A');
     const right = side(c.commit, c.status === 'D');
@@ -37,16 +38,19 @@ export class DiffCommands {
     const service = this.deps.snapshots();
     if (!service) return;
     const turn = node?.kind === 'turn' && node.turn.meta ? node.turn : service.getTurns().find((t) => t.commit === (node as any)?.turn?.commit) ?? service.getTurns()[0];
-    if (!turn) { void vscode.window.showInformationMessage('Pi: 本会话还没有轮次快照。'); return; }
+    if (!turn) {
+      void vscode.window.showInformationMessage(l10n('diff.sessionTurnSnapshotsYet'));
+      return;
+    }
     const patch = await service.turnDiff(turn.commit);
-    await this.openDocument(patch, 'diff', `Pi · 第 ${turn.meta.turnIndex} 轮差异`);
+    await this.openDocument(patch, 'diff', l10n('diff.turnDiff', turn.meta.turnIndex));
   }
 
   async openSessionDiff(): Promise<void> {
     const service = this.deps.snapshots();
     if (!service) return;
     const patch = await service.sessionDiff();
-    await this.openDocument(patch, 'diff', 'Pi · 本会话累计差异');
+    await this.openDocument(patch, 'diff', l10n('diff.cumulativeSessionDiff'));
   }
 
   async copyChangeContent(node?: ChangeNode): Promise<void> {
@@ -54,9 +58,12 @@ export class DiffCommands {
     if (!c) return;
     const service = this.deps.snapshots();
     const blob = await service?.readBlob(c.commit, c.path);
-    if (!blob) { void vscode.window.showInformationMessage('Pi: 该文件在新快照中不存在（可能已删除或已脱敏）。'); return; }
+    if (!blob) {
+      void vscode.window.showInformationMessage(l10n('diff.fileExistNewSnapshot'));
+      return;
+    }
     await vscode.env.clipboard.writeText(blob.toString('utf8'));
-    void vscode.window.showInformationMessage(`Pi: 已复制 ${c.displayPath}`);
+    void vscode.window.showInformationMessage(l10n('diff.copied', c.displayPath));
   }
 
   async copyDiffPatch(node?: ChangeNode): Promise<void> {
@@ -66,7 +73,7 @@ export class DiffCommands {
       ? await service.changeDiff(node.change)
       : node?.kind === 'turn' ? await service.turnDiff(node.turn.commit) : await service.sessionDiff();
     await vscode.env.clipboard.writeText(patch);
-    void vscode.window.showInformationMessage('Pi: 已复制 diff 补丁');
+    void vscode.window.showInformationMessage(l10n('diff.diffPatchCopied'));
   }
 
   private async openDocument(content: string, language: string, title: string): Promise<void> {
@@ -81,7 +88,7 @@ export class DiffCommands {
     if (!service || !turn) return;
     const ref = `refs/pi/turns/${service.currentSessionKey}/${turn.meta.turnId}`;
     await vscode.env.clipboard.writeText(`git --git-dir="${service.shadowGit.dir}" show ${ref}`);
-    void vscode.window.showInformationMessage(`Pi: 已复制影子仓库定位命令（${turn.commit.slice(0, 8)}）`);
+    void vscode.window.showInformationMessage(l10n('diff.shadowRepositoryCommandCopied', turn.commit.slice(0, 8)));
   }
 
   /** P2 draft: explicit double confirmation, only workspace files, never writes external paths back. */
@@ -89,26 +96,32 @@ export class DiffCommands {
     const c = node?.kind === 'change' ? node.change : undefined;
     if (!c) return;
     if (c.scope === 'external') {
-      void vscode.window.showWarningMessage('Pi: 工程外改动绝不写回原路径。请手动复制内容后自行决定。');
+      void vscode.window.showWarningMessage(l10n('diff.workspaceChangesNeverWritten'));
       return;
     }
-    if (this.drafts.get(this.key(c)) === 'applied') { void vscode.window.showInformationMessage('Pi: 该改动已标记应用。'); return; }
+    if (this.drafts.get(this.key(c)) === 'applied') {
+      void vscode.window.showInformationMessage(l10n('diff.changeAlreadyMarkedApplied'));
+      return;
+    }
     if (c.redacted || PathMapper.looksSensitive(c.displayPath)) {
-      void vscode.window.showWarningMessage('Pi: 该文件已脱敏（疑似密钥），不提供应用草稿。');
+      void vscode.window.showWarningMessage(l10n('diff.fileRedactedLooksLike'));
       return;
     }
     const service = this.deps.snapshots();
     const blob = await service?.readBlob(c.commit, c.path);
-    if (!blob && c.status !== 'D') { void vscode.window.showErrorMessage('Pi: 无法读取影子快照内容。'); return; }
+    if (!blob && c.status !== 'D') {
+      void vscode.window.showErrorMessage(l10n('diff.couldReadShadowSnapshot'));
+      return;
+    }
     const target = c.absPath;
+    const draftLabel = l10n('diff.generatePatchDraft');
     const choice = await vscode.window.showWarningMessage(
-      `Pi: 将把第 ${c.turnIndex} 轮的 ${c.displayPath} 应用到工作区？\n这会覆盖当前文件内容，且不会自动提交到用户仓库。`,
-      { modal: true }, '生成补丁草稿', '取消');
-    if (choice !== '生成补丁草稿') return;
+      l10n('diff.applyTurnWorkspaceOverwrites', c.displayPath, c.turnIndex),
+      { modal: true }, draftLabel, l10n('diff.cancel'));
+    if (choice !== draftLabel) return;
     // We never overwrite directly: produce an untitled .patch document with explicit instructions.
     const patch = await service?.changeDiff(c) ?? '';
-    const doc = await vscode.workspace.openTextDocument({ language: 'diff', content:
-      `# Pi 草稿补丁（只读，不会自动应用）\n# 目标: ${target ?? c.displayPath}\n# 轮次: ${c.turnIndex} · commit ${c.commit.slice(0, 8)}\n# 手动应用: git apply <此补丁> （请自行检查后再执行）\n\n${patch}` });
+    const doc = await vscode.workspace.openTextDocument({ language: 'diff', content: l10n('diff.draftPatchReadOnly', target ?? c.displayPath, c.turnIndex, c.commit.slice(0, 8), patch) });
     await vscode.window.showTextDocument(doc);
     this.drafts.set(this.key(c), 'applied');
     this.deps.log.info(`draft applied (patch-only): ${c.displayPath}`);
@@ -118,16 +131,19 @@ export class DiffCommands {
     const c = node?.kind === 'change' ? node.change : undefined;
     if (!c) return;
     this.drafts.set(this.key(c), 'rejected');
-    void vscode.window.showInformationMessage(`Pi: 已标记拒绝 ${c.displayPath}（不影响工作区文件）`);
+    void vscode.window.showInformationMessage(l10n('diff.markedRejectedWorkspaceFile', c.displayPath));
   }
 
   async reviewChanges(): Promise<void> {
     const service = this.deps.snapshots();
     if (!service) return;
     const pick = await vscode.window.showQuickPick([
-      { label: '全部', value: 'all' }, { label: '仅工程内', value: 'workspace' },
-      { label: '仅工程外', value: 'external' }, { label: '仅新增', value: 'added' }, { label: '仅删除', value: 'deleted' },
-    ], { title: 'Pi: 逐条审查改动' });
+      { label: l10n('diff.all'), value: 'all' },
+      { label: l10n('diff.workspaceOnly'), value: 'workspace' },
+      { label: l10n('diff.outsideWorkspaceOnly'), value: 'external' },
+      { label: l10n('diff.addedOnly'), value: 'added' },
+      { label: l10n('diff.deletedOnly'), value: 'deleted' },
+    ], { title: l10n('diff.reviewChangesOneOne') });
     if (!pick) return;
     void vscode.commands.executeCommand('setContext', 'pi.reviewFilter', pick.value);
     this.deps.openOverview();
@@ -140,11 +156,14 @@ export class DiffCommands {
     if (!service || !file || file.scheme !== 'file') return;
     const rel = vscode.workspace.asRelativePath(file, false).replace(/\\/g, '/');
     const matches = service.getChanges().filter((c) => c.scope === 'workspace' && c.displayPath.endsWith(rel));
-    if (!matches.length) { void vscode.window.showInformationMessage('Pi: 当前文件在本次会话中没有记录到改动。'); return; }
+    if (!matches.length) {
+      void vscode.window.showInformationMessage(l10n('diff.changesRecordedFileSession'));
+      return;
+    }
     const pick = await vscode.window.showQuickPick(matches.map((c) => ({
-      label: `第 ${c.turnIndex} 轮 · ${c.status} · ${c.displayPath}`,
+      label: l10n('diff.turn', c.turnIndex, c.status, c.displayPath),
       description: c.at, change: c,
-    })), { title: `Pi: ${path.basename(file.fsPath)} 的历次差异` });
+    })), { title: l10n('diff.historyDiff', path.basename(file.fsPath)) });
     if (pick) await this.openChange(undefined, pick.change);
   }
 

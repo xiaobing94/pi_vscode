@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from './I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { WorkspaceBinding, WorkspaceRegistry } from '../core/WorkspaceRegistry';
@@ -108,10 +109,11 @@ export class AppController {  // async dispose; see dispose() below
     // silently ignoring the change (previously only a debug log line).
     this.disposables.push(config.onDidChangeRuntime((keys) => {
       const list = keys.map((k) => k.replace(/^pi\./, '')).join(', ');
+      const restart = l10n('app.restartNow');
       void vscode.window.showInformationMessage(
-        `Pi: ${list} 已修改，需要重启 Pi 进程后生效。`,
-        '立即重启', '稍后',
-      ).then((choice) => { if (choice === '立即重启') void vscode.commands.executeCommand('pi.restartPi'); });
+        l10n('app.changedRestartProcessApply', list),
+        restart, l10n('app.later'),
+      ).then((choice) => { if (choice === restart) void vscode.commands.executeCommand('pi.restartPi'); });
     }));
 
     const cmd = (name: string, fn: (...args: any[]) => unknown) => vscode.commands.registerCommand(name, fn);
@@ -157,22 +159,22 @@ export class AppController {  // async dispose; see dispose() below
 
         if (probe.available) {
           if (await openNativeChat()) return;
-          void vscode.window.showWarningMessage('Pi: 无法打开内置 Chat 视图，已改用右侧 Pi 面板。');
+          void vscode.window.showWarningMessage(l10n('app.couldOpenBuiltChat'));
           await vscode.commands.executeCommand('pi.chat.focusSecondary');
           return;
         }
 
         log.info(`native chat unavailable: ${probe.reason ?? 'unknown'} (agents=${probe.otherAgents.join(',') || 'none'})`);
-        const actions = [
-          probe.chatDisabled ? '修改设置' : '仍尝试打开',
-          '使用右侧 Pi 面板',
-        ];
+        const fixSettings = l10n('app.changeSettings');
+        const tryAnyway = l10n('app.tryAnyway');
+        const useSidebar = l10n('app.useSidePanel');
+        const actions = [probe.chatDisabled ? fixSettings : tryAnyway, useSidebar];
         const choice = await vscode.window.showInformationMessage(`Pi: ${probe.reason}`, ...actions);
-        if (choice === '修改设置') {
+        if (choice === fixSettings) {
           await vscode.commands.executeCommand('workbench.action.openSettings', 'chat.disableAIFeatures');
           return;
         }
-        if (choice === '仍尝试打开' && await openNativeChat()) return;
+        if (choice === tryAnyway && await openNativeChat()) return;
         await vscode.commands.executeCommand('pi.chat.focusSecondary');
       }),
       cmd('pi.showDiagnostics', () => diagnostics.show()),
@@ -183,13 +185,25 @@ export class AppController {  // async dispose; see dispose() below
           const state = b.gateway.getState();
           return {
             label: `${b.key === this.activeKey ? '$(check) ' : ''}${info?.streaming ? '$(loading~spin) ' : ''}${info?.label ?? b.key}`,
-            description: [this.deps.registry.all().length > 1 ? b.binding.folder.name : '', info?.streaming ? '运行中' : state.status === 'ready' ? '空闲' : state.status].filter(Boolean).join(' · '),
+            description: [
+              this.deps.registry.all().length > 1 ? b.binding.folder.name : '',
+              info?.streaming
+                ? l10n('app.running')
+                : state.status === 'ready' ? l10n('app.idle') : state.status,
+            ].filter(Boolean).join(' · '),
             detail: state.state?.sessionFile,
             key: b.key,
           };
         });
-        picks.push({ label: '$(add) 新开并行会话', description: '独立 Pi 进程，可与其它会话同时运行', create: true });
-        const pick = await vscode.window.showQuickPick(picks, { title: 'Pi: 切换会话标签', matchOnDetail: true });
+        picks.push({
+          label: `$(add) ${l10n('webview.newParallelSession')}`,
+          description: l10n('app.ownProcessRunsAlongside'),
+          create: true,
+        });
+        const pick = await vscode.window.showQuickPick(picks, {
+          title: l10n('app.switchSessionTab'),
+          matchOnDetail: true,
+        });
         if (!pick) return;
         if (pick.create) { await this.createParallelSession(); return; }
         if (pick.key) await this.setActive(pick.key);
@@ -218,7 +232,10 @@ export class AppController {  // async dispose; see dispose() below
         if (p) await this.switchSession(p);
       }),
       cmd('pi.renameSession', async (node?: any) => {
-        const name = await vscode.window.showInputBox({ title: 'Pi: 重命名会话', value: node?.label });
+        const name = await vscode.window.showInputBox({
+          title: l10n('app.renameSession'),
+          value: node?.label,
+        });
         if (name) await gw()?.send({ type: 'set_session_name', name });
       }),
       cmd('pi.forkSession', async () => {
@@ -227,9 +244,12 @@ export class AppController {  // async dispose; see dispose() below
       }),
       cmd('pi.cloneSession', async () => { await gw()?.send({ type: 'clone' }); }),
       cmd('pi.exportHtml', async () => {
-        const picked = await vscode.window.showSaveDialog({ filters: { HTML: ['html'] }, saveLabel: '导出会话 HTML' });
+        const picked = await vscode.window.showSaveDialog({
+          filters: { HTML: ['html'] },
+          saveLabel: l10n('app.exportSessionHtml'),
+        });
         const data = await gw()?.send<{ path: string }>({ type: 'export_html', outputPath: picked?.fsPath });
-        if (data) void vscode.window.showInformationMessage(`Pi: 已导出 ${data.path}`);
+        if (data) void vscode.window.showInformationMessage(l10n('app.exported', data.path));
       }),
       cmd('pi.sharePreview', async () => { await this.sendCommands()?.sharePreview(); }),
       cmd('pi.openTui', async () => {
@@ -243,20 +263,25 @@ export class AppController {  // async dispose; see dispose() below
         const b = active();
         if (!b) return;
         await b.collector.collectFallback(b.binding);
-        await b.snapshots.snapshot({ reason: 'manual', prompt: '手动重新扫描当前工作区' });
+        await b.snapshots.snapshot({ reason: 'manual', prompt: l10n('app.manualRescanWorkspace') });
         statusBar.refresh();
       }),
       cmd('pi.exportSnapshotBundle', async () => {
         const out = await svc()?.repack();
-        if (out) void vscode.window.showInformationMessage(`Pi: 已导出快照包 ${out}（另有 .meta.json）`);
+        if (out) void vscode.window.showInformationMessage(l10n('app.snapshotBundleExportedPlus', out));
       }),
       cmd('pi.clearSessionShadowData', async () => {
-        const ok = await vscode.window.showWarningMessage('Pi: 清除本会话影子数据？只删除影子 refs，不改动工作区。', { modal: true }, '清除');
-        if (ok === '清除') await svc()?.clearSessionData();
+        const clear = l10n('app.clear');
+        const ok = await vscode.window.showWarningMessage(
+          l10n('app.clearShadowDataSession'),
+          { modal: true },
+          clear,
+        );
+        if (ok === clear) await svc()?.clearSessionData();
       }),
       cmd('pi.showCostStats', async () => {
         const a = await svc()?.aggregate();
-        if (a) void vscode.window.showInformationMessage(`Pi 跨会话统计：${a.sessions} 会话 · ${a.turns} 轮 · ${a.changes} 项改动 · ⚠ 工程外 ${a.external}`);
+        if (a) void vscode.window.showInformationMessage(l10n('app.crossSessionStatsSession', a.sessions, a.turns, a.changes, a.external));
       }),
       cmd('pi.mcpList', async () => { await new McpPanel(config, log, resolver).show(); }),
       cmd('pi.bugReportWizard', async () => { await this.sendCommands()?.bugReportWizard(); }),
@@ -264,7 +289,9 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.toggleReviewOnSave', async () => {
         const c = config.get().reviewOnSave;
         await vscode.workspace.getConfiguration('pi.reviewOnSave').update('enabled', !c.enabled, vscode.ConfigurationTarget.Workspace);
-        void vscode.window.showInformationMessage(`Pi: 保存文件即触发审查 已${c.enabled ? '关闭' : '开启'}`);
+        void vscode.window.showInformationMessage(
+          l10n('app.reviewSaveNow', c.enabled ? 'off' : 'on'),
+        );
       }),
       cmd('pi.sendSelection', (uri?: vscode.Uri) => this.sendCommands()?.sendSelection(uri)),
       cmd('pi.sendFile', (uri?: vscode.Uri) => this.sendCommands()?.sendFile(uri)),
@@ -274,7 +301,7 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.compact', () => gw()?.send({ type: 'compact' })),
       cmd('pi.openTurnEditDiff', async (turnId?: string) => {
         const ok = await this.active()?.edits.openTurnDiff(typeof turnId === 'string' ? turnId : undefined);
-        if (!ok) void vscode.window.showInformationMessage('Pi: 最近一轮没有文件改动。');
+        if (!ok) void vscode.window.showInformationMessage(l10n('app.latestTurnMadeFile'));
       }),
       cmd('pi.openSessionEditDiff', async () => {
         const ok = await this.active()?.edits.openSessionDiff();
@@ -283,18 +310,29 @@ export class AppController {  // async dispose; see dispose() below
       cmd('pi.undoAllChanges', async () => {
         const svc = this.active()?.snapshots;
         const patch = svc ? await svc.reverseSessionDiff() : '';
-        const text = `# Pi 反向补丁草稿（只读，不会自动应用）\n# 把本会话累计改动反向应用，可自行检查后执行：git apply <此补丁>\n# 影子快照不会写回工作区，也不会回滚用户 Git 仓库。\n\n${patch || '（本会话没有可用的影子快照）'}`;
+        const text = l10n('app.reversePatchDraftRead', patch || '(this session has no usable shadow snapshot)');
         const doc = await vscode.workspace.openTextDocument({ language: 'diff', content: text });
         await vscode.window.showTextDocument(doc, { preview: true });
       }),
       cmd('pi.pickTurnDiff', async () => {
         const tracker = this.active()?.edits;
         const turns = tracker?.allTurns() ?? [];
-        if (!tracker || !turns.length) { void vscode.window.showInformationMessage('Pi: 本会话还没有文件改动。'); return; }
+        if (!tracker || !turns.length) {
+          void vscode.window.showInformationMessage(l10n('app.sessionFileChangesYet'));
+          return;
+        }
         const pick = await vscode.window.showQuickPick([
-          { label: '$(git-compare) 本会话全部改动', id: '' },
-          ...turns.map((t) => { const s = tracker.summary(t); return { label: `$(diff) 第 ${t.index} 轮 · ${s.files.length} 个文件 · +${s.added} -${s.removed}`, description: t.prompt.slice(0, 60), detail: s.files.map((f) => f.display).join(', '), id: t.id }; }),
-        ], { title: 'Pi: 查看对话改动（原生差异）', matchOnDetail: true });
+          { label: `$(git-compare) ${l10n('app.changesSession')}`, id: '' },
+          ...turns.map((turn) => {
+            const s = tracker.summary(turn);
+            return {
+              label: `$(diff) ${l10n('app.turnFileS', turn.index, s.files.length, s.added, s.removed)}`,
+              description: turn.prompt.slice(0, 60),
+              detail: s.files.map((f) => f.display).join(', '),
+              id: turn.id,
+            };
+          }),
+        ], { title: l10n('app.conversationChangesNativeDiff'), matchOnDetail: true });
         if (!pick) return;
         if (pick.id) await tracker.openTurnDiff(pick.id); else await tracker.openSessionDiff();
       }),
@@ -306,16 +344,19 @@ export class AppController {  // async dispose; see dispose() below
       }),
       cmd('pi.selectModel', async (query?: string) => {
         const gateway = gw();
-        if (!gateway) { void vscode.window.showWarningMessage('Pi: 当前没有可用的 Pi 会话。'); return; }
+        if (!gateway) {
+          void vscode.window.showWarningMessage(l10n('app.availableSession'));
+          return;
+        }
         let models: any[] = [];
         try {
           models = (await gateway.send<{ models: any[] }>({ type: 'get_available_models' }))?.models ?? [];
         } catch (err) {
-          void vscode.window.showErrorMessage(`Pi: 获取模型列表失败 — ${err instanceof Error ? err.message : String(err)}`);
+          void vscode.window.showErrorMessage(l10n('app.couldLoadModelList', err instanceof Error ? err.message : String(err)));
           return;
         }
         if (!models.length) {
-          void vscode.window.showWarningMessage('Pi: 没有可用模型。请先在 Pi 中登录 provider（/login）或检查 ~/.pi/agent/models.json。');
+          void vscode.window.showWarningMessage(l10n('app.modelsAvailableLogProvider'));
           return;
         }
         const current = gateway.getState().state?.model;
@@ -324,48 +365,55 @@ export class AppController {  // async dispose; see dispose() below
           ? models.filter((m) => `${m.provider}/${m.id}`.toLowerCase().includes(pattern) || String(m.name ?? '').toLowerCase().includes(pattern))
           : models;
         if (!candidates.length) {
-          void vscode.window.showWarningMessage(`Pi: 没有匹配 “${pattern}” 的模型。`);
+          void vscode.window.showWarningMessage(l10n('app.modelMatches', pattern));
           return;
         }
         if (candidates.length === 1 && pattern) {
           const only = candidates[0];
           await gateway.send({ type: 'set_model', provider: only.provider, modelId: only.id }).catch((err) => {
-            void vscode.window.showErrorMessage(`Pi: 切换模型失败 — ${err instanceof Error ? err.message : String(err)}`);
+            void vscode.window.showErrorMessage(l10n('app.couldSwitchModel', err instanceof Error ? err.message : String(err)));
           });
           const state = await gateway.refreshState();
           void gateway.refreshStats();
           chat.setStateInfo(state, gateway.getState().stats as any, undefined, undefined, this.activeKey);
-          void vscode.window.showInformationMessage(`Pi: 已切换到 ${state?.model?.provider ?? only.provider}/${state?.model?.id ?? only.id}`);
+          const label = `${state?.model?.provider ?? only.provider}/${state?.model?.id ?? only.id}`;
+          void vscode.window.showInformationMessage(l10n('app.switched', label));
           return;
         }
         const pick = await vscode.window.showQuickPick(candidates.map((m) => ({
           label: `${m.provider}/${m.id}`,
-          description: [m.name, m.provider === current?.provider && m.id === current?.id ? '← 当前' : undefined].filter(Boolean).join(' · '),
+          description: [
+            m.name,
+            m.provider === current?.provider && m.id === current?.id ? l10n('app.current') : undefined,
+          ].filter(Boolean).join(' · '),
           detail: [
-            typeof m.contextWindow === 'number' ? `上下文 ${Math.round(m.contextWindow / 1000)}k` : undefined,
-            m.reasoning ? '推理' : undefined,
-            Array.isArray(m.input) && m.input.includes('image') ? '图片' : undefined,
+            typeof m.contextWindow === 'number'
+              ? l10n('app.contextK', Math.round(m.contextWindow / 1000))
+              : undefined,
+            m.reasoning ? l10n('app.reasoning') : undefined,
+            Array.isArray(m.input) && m.input.includes('image') ? l10n('app.images') : undefined,
           ].filter(Boolean).join(' · ') || undefined,
           model: m,
-        })), { title: 'Pi: 选择模型', matchOnDescription: true });
+        })), { title: l10n('app.selectModel'), matchOnDescription: true });
         if (!pick) return;
         try {
           await gateway.send({ type: 'set_model', provider: pick.model.provider, modelId: pick.model.id });
         } catch (err) {
-          void vscode.window.showErrorMessage(`Pi: 切换模型失败 — ${err instanceof Error ? err.message : String(err)}`);
+          void vscode.window.showErrorMessage(l10n('app.couldSwitchModel', err instanceof Error ? err.message : String(err)));
           return;
         }
         const state = await gateway.refreshState();
         void gateway.refreshStats();
         chat.setStateInfo(state, gateway.getState().stats as any, undefined, undefined, this.activeKey);
         const shown = `${state?.model?.provider ?? pick.model.provider}/${state?.model?.id ?? pick.model.id}`;
+        const asDefault = l10n('app.setDefaultModel');
         const remember = await vscode.window.showInformationMessage(
-          `Pi: 已切换到 ${shown}（仅本会话生效）`,
-          '设为默认模型',
+          l10n('app.switchedSessionOnly', shown),
+          asDefault,
         );
-        if (remember === '设为默认模型') {
+        if (remember === asDefault) {
           await vscode.workspace.getConfiguration('pi').update('model', shown, vscode.ConfigurationTarget.Global);
-          void vscode.window.showInformationMessage(`Pi: 已将 ${shown} 写入用户设置 pi.model`);
+          void vscode.window.showInformationMessage(l10n('app.wroteUserSettingModel', shown));
         }
       }),
       cmd('pi.selectThinkingLevel', async (query?: string) => {
@@ -383,24 +431,29 @@ export class AppController {  // async dispose; see dispose() below
           chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any, undefined, undefined, this.activeKey);
           return;
         }
-        const pick = await vscode.window.showQuickPick(levels.map((l) => ({ label: l === current ? `${l} · 当前` : l, level: l as any })), { title: 'Pi: 选择思考级别' });
+        const pick = await vscode.window.showQuickPick(
+          levels.map((l) => ({ label: l === current ? l10n('app.current2', l) : l, level: l as any })),
+          { title: l10n('app.selectThinkingLevel') },
+        );
         if (!pick) return;
         await gateway.send({ type: 'set_thinking_level', level: pick.level });
         chat.setStateInfo(await gateway.refreshState(), gateway.getState().stats as any, undefined, undefined, this.activeKey);
       }),
       cmd('pi.setSteeringMode', async () => {
-        const p = await vscode.window.showQuickPick(['all', 'one-at-a-time'], { title: 'Pi: steer 模式' });
+        const p = await vscode.window.showQuickPick(['all', 'one-at-a-time'], { title: l10n('app.steerMode') });
         if (p) await gw()?.send({ type: 'set_steering_mode', mode: p as any });
       }),
       cmd('pi.setFollowUpMode', async () => {
-        const p = await vscode.window.showQuickPick(['all', 'one-at-a-time'], { title: 'Pi: follow-up 模式' });
+        const p = await vscode.window.showQuickPick(['all', 'one-at-a-time'], { title: l10n('app.followMode') });
         if (p) await gw()?.send({ type: 'set_follow_up_mode', mode: p as any });
       }),
       cmd('pi.showStatus', async () => {
         const stats = await gw()?.refreshStats();
         const state = gw()?.getState().state;
         chat.setStateInfo(state, stats as any, undefined, undefined, this.activeKey);
-        if (stats) void vscode.window.showInformationMessage(`Pi: ${state?.model?.id ?? '-'} · 上下文 ${stats.contextUsage?.percent ?? '?'}% · ${stats.tokens?.total ?? 0} tokens · $${(stats.cost ?? 0).toFixed(3)}`);
+        if (stats) {
+          void vscode.window.showInformationMessage(l10n('app.contextTokens', state?.model?.id ?? '-', stats.contextUsage?.percent ?? '?', stats.tokens?.total ?? 0, (stats.cost ?? 0).toFixed(3)));
+        }
       }),
       cmd('pi.checkEnvironment', async () => { await this.probe.show(); }),
       cmd('pi.openDocs', async () => {
@@ -408,17 +461,23 @@ export class AppController {  // async dispose; see dispose() below
       }),
       cmd('pi.restartPi', async () => {
         const b = active();
-        if (!b) { void vscode.window.showWarningMessage('Pi: 没有活动的工作区。'); return; }
+        if (!b) { void vscode.window.showWarningMessage(l10n('app.activeWorkspace')); return; }
         // Runtime resolution is cached; clear it so a new pi.nodePath takes effect.
         this.deps.resolver.invalidate();
         await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: 'Pi: 正在重启 Pi 进程…' },
+          { location: vscode.ProgressLocation.Notification, title: l10n('app.restartingProcess') },
           async () => { await b.gateway.restart(); },
         );
         const s = b.gateway.getState();
-        if (s.status === 'ready') void vscode.window.showInformationMessage('Pi: 进程已重启。');
-        else void vscode.window.showWarningMessage(`Pi: 重启后状态为 ${s.status}${s.error ? ` — ${s.error}` : ''}`, '检查运行环境')
-          .then((c) => { if (c) void vscode.commands.executeCommand('pi.checkEnvironment'); });
+        if (s.status === 'ready') {
+          void vscode.window.showInformationMessage(l10n('app.processRestarted'));
+        } else {
+          const check = l10n('app.checkEnvironment');
+          void vscode.window.showWarningMessage(
+            l10n('app.statusAfterRestart', s.status, s.error ? ` — ${s.error}` : ''),
+            check,
+          ).then((c) => { if (c === check) void vscode.commands.executeCommand('pi.checkEnvironment'); });
+        }
       }),
       cmd('pi.openPath', async (p: string, line = 1, col = 1) => {
         if (!p) return;
@@ -536,18 +595,24 @@ export class AppController {  // async dispose; see dispose() below
     if (registry.all().length > 1) {
       const pick = await vscode.window.showQuickPick(
         registry.all().map((b) => ({ label: b.folder.name, description: b.folder.uri.fsPath, binding: b })),
-        { title: 'Pi: 并行会话在哪个工作区文件夹中运行？' },
+        { title: l10n('app.whichWorkspaceFolderShould') },
       );
       if (!pick) return;
       binding = pick.binding;
     }
-    if (!binding) { void vscode.window.showWarningMessage('Pi: 没有可用的工作区文件夹。'); return; }
+    if (!binding) {
+      void vscode.window.showWarningMessage(l10n('app.workspaceFolderAvailable'));
+      return;
+    }
     if (sessionPath) {
       // Two Pi processes appending to one session file would corrupt it.
       const open = this.bundleForSessionFile(sessionPath);
       if (open) { await this.setActive(open.key); return; }
       try { await vscode.workspace.fs.stat(vscode.Uri.file(sessionPath)); }
-      catch { void vscode.window.showWarningMessage(`Pi: 会话文件已不存在，无法恢复：${sessionPath}`); return; }
+      catch {
+        void vscode.window.showWarningMessage(l10n('app.sessionFileLongerExists', sessionPath));
+        return;
+      }
     }
     const key = `${binding.repoKey}-s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const bundle = await this.createBundle(binding, key);
@@ -564,7 +629,7 @@ export class AppController {  // async dispose; see dispose() below
         }
       } catch (err) {
         log.error('switch_session in new tab failed', err);
-        void vscode.window.showErrorMessage(`Pi: 在新标签中恢复会话失败：${err instanceof Error ? err.message : String(err)}`);
+        void vscode.window.showErrorMessage(l10n('app.couldResumeSessionNew', err instanceof Error ? err.message : String(err)));
       }
     } else if (this.active() === bundle) {
       await this.setActive(key);
@@ -585,12 +650,17 @@ export class AppController {  // async dispose; see dispose() below
     const b = this.bindings.get(key);
     if (!b) return;
     if (this.bindings.size <= 1) {
-      void vscode.window.showInformationMessage('Pi: 这是最后一个会话标签，无法关闭。可用「新建」开始新的对话。');
+      void vscode.window.showInformationMessage(l10n('app.lastSessionTabCannot'));
       return;
     }
     if (this.deps.chat.isSessionStreaming(key)) {
-      const ok = await vscode.window.showWarningMessage('Pi: 该会话正在运行，关闭标签会终止它。', { modal: true }, '终止并关闭');
-      if (ok !== '终止并关闭') return;
+      const abortAndClose = l10n('app.abortClose');
+      const ok = await vscode.window.showWarningMessage(
+        l10n('app.sessionStillRunningClosing'),
+        { modal: true },
+        abortAndClose,
+      );
+      if (ok !== abortAndClose) return;
       await b.gateway.send({ type: 'abort' }, 3000).catch(() => {});
     }
     await this.disposeBundle(b);
@@ -636,10 +706,11 @@ export class AppController {  // async dispose; see dispose() below
     diagnostics.update();
     statusBar.refresh();
     if (initError) {
+      const check = l10n('app.checkEnvironment');
       void vscode.window.showWarningMessage(
-        `Pi: 影子仓库不可用，改动记录已暂停 — ${initError.message.split('\n')[0]}`,
-        '检查运行环境',
-      ).then((choice) => { if (choice) void vscode.commands.executeCommand('pi.checkEnvironment'); });
+        l10n('app.shadowRepositoryUnavailableChange', initError.message.split('\n')[0]),
+        check,
+      ).then((choice) => { if (choice === check) void vscode.commands.executeCommand('pi.checkEnvironment'); });
     }
   }
 
@@ -787,7 +858,7 @@ export class AppController {  // async dispose; see dispose() below
       await this.deps.chat.replay(await b.gateway.getMessages(), b.key);
     } catch (err) {
       this.deps.log.error('replay messages after session switch failed', err);
-      void vscode.window.showWarningMessage(`Pi: 会话已切换，但消息回放失败：${err instanceof Error ? err.message : String(err)}`);
+      void vscode.window.showWarningMessage(l10n('app.sessionSwitchedReplayingMessages', err instanceof Error ? err.message : String(err)));
     }
   }
 
@@ -809,7 +880,7 @@ export class AppController {  // async dispose; see dispose() below
       try {
         await vscode.workspace.fs.stat(vscode.Uri.file(target));
       } catch {
-        void vscode.window.showWarningMessage(`Pi: 会话文件已不存在，无法恢复：${target}`);
+        void vscode.window.showWarningMessage(l10n('app.sessionFileLongerExists', target));
         await this.sessionTree.refresh(b.gateway.getState().state);
         return;
       }
@@ -819,7 +890,7 @@ export class AppController {  // async dispose; see dispose() below
         await this.onSessionChanged();
       } catch (err) {
         this.deps.log.error('switch_session failed', err);
-        void vscode.window.showErrorMessage(`Pi: 切换会话失败：${err instanceof Error ? err.message : String(err)}`);
+        void vscode.window.showErrorMessage(l10n('app.switchingSessionFailed', err instanceof Error ? err.message : String(err)));
       }
     };
     // Serialise: two rapid clicks must not interleave RPC rebind + replay.
@@ -847,7 +918,7 @@ export class AppController {  // async dispose; see dispose() below
   /** ChatViewProvider uses this hook for prompt / steer / followUp. */
   async send(text: string, images?: Array<{ data: string; mimeType: string }>, behavior?: 'steer' | 'followUp', sessionKey?: string): Promise<void> {
     const b = (sessionKey ? this.bindings.get(sessionKey) : undefined) ?? this.active();
-    if (!b) throw new Error('没有可用的 Pi 工作区');
+    if (!b) throw new Error(l10n('app.workspaceAvailable'));
     if (text.startsWith('/') && await this.runLocalSlash(text)) return;
     const type = behavior === 'followUp' ? 'follow_up' : behavior === 'steer' && b.gateway.getState().state?.isStreaming ? 'steer' : 'prompt';
     const imgs = images?.length ? images.map((i: any) => ({ type: 'image', data: i.data, mimeType: i.mimeType })) : undefined;
@@ -869,7 +940,9 @@ export class AppController {  // async dispose; see dispose() below
     };
     const command = builtins[name];
     if (!command) {
-      if (name === '/tui') void vscode.window.showInformationMessage('Pi: TUI 入口已在设置中关闭（pi.enableTui）。可启用后使用 /tui。');
+      if (name === '/tui') {
+        void vscode.window.showInformationMessage(l10n('app.tuiEntryDisabledSettings'));
+      }
       return name === '/tui';
     }
     await vscode.commands.executeCommand(command, ...(args.length ? [args.join(' ')] : []));

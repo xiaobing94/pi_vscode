@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { dateTime, l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { WorkspaceBinding } from '../core/WorkspaceRegistry';
@@ -82,7 +83,7 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
     if (element.kind === 'session') {
       item.iconPath = new vscode.ThemeIcon('comment-discussion');
       item.contextValue = 'pi.session';
-      item.command = { command: 'pi.switchSession', title: '切换会话', arguments: [element] };
+      item.command = { command: 'pi.switchSession', title: l10n('sessionTree.switchSession'), arguments: [element] };
     } else if (element.kind === 'message') {
       item.iconPath = new vscode.ThemeIcon('comment');
       item.contextValue = 'pi.message';
@@ -118,7 +119,7 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
     if (state?.sessionId) {
       nodes.push({
         kind: 'session', label: state.sessionName || state.sessionId.slice(0, 12),
-        description: '当前会话', tooltip: state.sessionFile,
+        description: l10n('sessionTree.currentSession'), tooltip: state.sessionFile,
         sessionPath: state.sessionFile, sessionId: state.sessionId, contextValue: 'pi.session',
       });
       if (state.sessionFile) this.remember(state.sessionName || state.sessionId.slice(0, 12), state.sessionFile);
@@ -131,16 +132,24 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
     if (current) seen.add(current);
     const history = this.disk.filter((s) => !seen.has(this.key(s.path))).slice(0, 40).map((s) => this.sessionNode(s));
     if (history.length) {
-      nodes.push({ kind: 'group', label: `历史会话 (${history.length})`, description: '磁盘上的 *.jsonl', children: history });
+      nodes.push({
+        kind: 'group',
+        label: l10n('sessionTree.sessionHistory', history.length),
+        description: l10n('sessionTree.diskJsonlFiles'),
+        children: history,
+      });
     } else {
       // Never fall back to the in-memory `recent` list: those paths may have
       // been deleted, and Pi CLI 1.5.2 turns a missing path into a NEW EMPTY
       // session (success: true) — the exact "点击历史会话是空的" symptom.
       nodes.push({
-        kind: 'group', label: this.diskScannedAt ? '历史会话 (0)' : '历史会话',
+        kind: 'group',
+        label: this.diskScannedAt ? l10n('sessionTree.sessionHistory0') : l10n('sessionTree.sessionHistory2'),
         children: [{
           kind: 'info',
-          label: this.diskScannedAt ? '未找到历史会话文件' : '正在读取历史会话…',
+          label: this.diskScannedAt
+            ? l10n('sessionTree.sessionFilesFound')
+            : l10n('sessionTree.readingSessionHistory'),
           description: this.diskScannedAt ? 'pi.resumeSession' : undefined,
           contextValue: 'pi.action',
         }],
@@ -151,10 +160,12 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
       const branch = this.flattenTree(this.tree).slice(-40);
       if (branch.length) {
         nodes.push({
-          kind: 'group', label: `会话树 (${branch.length})`, description: 'get_tree',
+          kind: 'group',
+          label: l10n('sessionTree.sessionTree', branch.length),
+          description: 'get_tree',
           children: branch.map((n) => ({
             kind: 'message', label: n.label ?? String(n.entry?.type ?? 'entry'),
-            description: n.entry?.id === this.leafId ? '当前叶' : n.entry?.type,
+            description: n.entry?.id === this.leafId ? l10n('sessionTree.currentLeaf') : (n.entry?.type as any),
             entryId: n.entry?.id,
             tooltip: `${n.entry?.type ?? ''} ${n.entry?.id ?? ''}`,
           } as SessionNode)),
@@ -162,14 +173,21 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
       }
     }
     const actions: SessionNode[] = [
-      { kind: 'info', label: '恢复会话…', contextValue: 'pi.action', description: 'pi.resumeSession' },
-      { kind: 'info', label: '新建会话', contextValue: 'pi.action', description: 'pi.newSession' },
+      { kind: 'info', label: l10n('sessionTree.resumeSession'), contextValue: 'pi.action', description: 'pi.resumeSession' },
+      { kind: 'info', label: l10n('sessionTree.newSession'), contextValue: 'pi.action', description: 'pi.newSession' },
     ];
     // Keep the tree in sync with `pi.enableTui`: never show a dead entry that
     // only produces an error message when clicked.
-    if (this.config.get().enableTui) actions.push({ kind: 'info', label: '在终端中打开 (TUI)', contextValue: 'pi.action', description: 'pi.openTui' });
-    actions.push({ kind: 'info', label: '导出 HTML', contextValue: 'pi.action', description: 'pi.exportHtml' });
-    nodes.push({ kind: 'group', label: '操作', children: actions });
+    if (this.config.get().enableTui) {
+      actions.push({
+        kind: 'info',
+        label: l10n('sessionTree.openTerminalTui'),
+        contextValue: 'pi.action',
+        description: 'pi.openTui',
+      });
+    }
+    actions.push({ kind: 'info', label: l10n('sessionTree.exportHtml'), contextValue: 'pi.action', description: 'pi.exportHtml' });
+    nodes.push({ kind: 'group', label: l10n('sessionTree.actions'), children: actions });
     return nodes;
   }
 
@@ -178,7 +196,7 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
     const where = s.sameCwd ? '' : ` · ${s.cwd}`;
     return {
       kind: 'session', label,
-      description: `${new Date(s.modified).toLocaleString()} · ${s.messageCount} 条${where}`,
+      description: l10n('sessionTree.messageS', dateTime(s.modified), s.messageCount, where),
       tooltip: `${s.cwd}\n${preview(s.firstMessage, 160)}\n${s.path}`,
       sessionPath: s.path, sessionId: s.id, contextValue: 'pi.session',
     };
@@ -261,17 +279,30 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
     const found = await this.refreshDisk();
     const picks: Array<{ label: string; description?: string; detail?: string; path: string }> = found.map((s) => ({
       label: s.name || (s.firstMessage && s.firstMessage !== '(no messages)' ? preview(s.firstMessage) : s.id.slice(0, 12)),
-      description: `${s.sameCwd ? '本工作区' : s.cwd || '其他工作区'} · ${s.messageCount} 条 · ${new Date(s.modified).toLocaleString()}`,
+      description: l10n('sessionTree.messageS2', s.sameCwd ? 'this workspace' : s.cwd || 'other workspace', s.messageCount, dateTime(s.modified)),
       detail: s.path,
       path: s.path,
     }));
-    picks.push({ label: '浏览会话文件…', description: '选择 ~/.pi/agent/sessions 下的 *.jsonl', path: '', detail: '文件不存在的历史会话不会被列出' });
-    const picked = await vscode.window.showQuickPick(picks, { title: `Pi: 恢复会话（${found.length} 个）`, matchOnDescription: true, matchOnDetail: true });
+    picks.push({
+      label: l10n('sessionTree.browseSessionFiles'),
+      description: l10n('sessionTree.pickJsonlUnderAgent'),
+      path: '',
+      detail: l10n('sessionTree.sessionsWhoseFilesLonger'),
+    });
+    const picked = await vscode.window.showQuickPick(picks, {
+      title: l10n('sessionTree.resumeSessionFound', found.length),
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
     if (!picked) return undefined;
     if (picked.path) return picked.path;
     const runtime = await this.runtime();
     const dir = runtime?.agentDir ? path.join(runtime.agentDir, 'sessions') : '';
-    const files = await vscode.window.showOpenDialog({ canSelectMany: false, defaultUri: dir ? vscode.Uri.file(dir) : undefined, filters: { 'Pi 会话': ['jsonl'] } });
+    const files = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      defaultUri: dir ? vscode.Uri.file(dir) : undefined,
+      filters: { [l10n('sessionTree.sessions')]: ['jsonl'] },
+    });
     return files?.[0]?.fsPath;
   }
 
@@ -280,7 +311,7 @@ export class SessionTree implements vscode.TreeDataProvider<SessionNode>, vscode
       const data = await this.gateway()?.send<{ messages: Array<{ entryId: string; text: string }> }>({ type: 'get_fork_messages' });
       const pick = await vscode.window.showQuickPick((data?.messages ?? []).map((m) => ({
         label: m.text.slice(0, 100).replace(/\n/g, ' '), description: m.entryId, entryId: m.entryId,
-      })), { title: 'Pi: 从哪条用户消息 fork' });
+      })), { title: l10n('sessionTree.forkWhichUserMessage') });
       return pick?.entryId;
     } catch (err) { this.log.warn(`fork picker: ${String(err)}`); return undefined; }
   }

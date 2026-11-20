@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { l10n } from '../core/I18n';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
@@ -101,7 +102,7 @@ export class ShadowGit {
       ];
       const child = execFile('git', argv, { env, cwd: this.gitDir, windowsHide: true, maxBuffer, encoding: 'utf8' } as any,
         (err, stdout, stderr) => {
-          if (err) reject(new Error(`git ${args.join(' ')} 失败: ${String(stderr || err.message).trim()}`));
+          if (err) reject(new Error(l10n('shadowGit.gitFailed', args.join(' '), String(stderr || err.message).trim())));
           else resolve(String(stdout));
         });
       child.stdin?.on('error', () => { /* git may close stdin early; error surfaces via stderr */ });
@@ -121,7 +122,7 @@ export class ShadowGit {
         // No shell: spawn argv directly.
         await new Promise<void>((resolve, reject) => {
           execFile('git', ['init', '--bare', this.gitDir], { windowsHide: true }, (err, _stdout, stderr) =>
-            err ? reject(new Error(`git init --bare 失败: ${stderr}`)) : resolve());
+            err ? reject(new Error(l10n('shadowGit.gitInitBareFailed', stderr))) : resolve());
         });
       }
       await this.git(['config', 'core.autocrlf', 'false']);
@@ -233,7 +234,7 @@ export class ShadowGit {
       };
       const argv = ['-c', 'core.autocrlf=false', '--git-dir', this.gitDir, ...args];
       const child = execFile('git', argv, { env, cwd, windowsHide: true, maxBuffer: 1 << 20 } as any,
-        (err: any, stdout: any, stderr: any) => err ? reject(new Error(`git commit-tree 失败: ${String(stderr || err.message)}`)) : resolve(String(stdout)));
+        (err: any, stdout: any, stderr: any) => err ? reject(new Error(l10n('shadowGit.gitCommitTreeFailed', String(stderr || err.message)))) : resolve(String(stdout)));
       child.stdin?.end(Buffer.from(message, 'utf8'));
     });
     return out.trim();
@@ -367,7 +368,7 @@ export class ShadowGit {
     if (!binary) args.push('--text');
     args.push(a ?? EMPTY_TREE, b);
     if (paths?.length) args.push('--', ...paths);
-    try { return await this.git(args); } catch (err) { return `无法生成差异：${String(err)}`; }
+    try { return await this.git(args); } catch (err) { return l10n('shadowGit.couldProduceDiff', String(err)); }
   }
 
   async lsTree(commit: string, prefix?: string): Promise<string[]> {

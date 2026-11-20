@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 
 /**
  * Whether VS Code's built-in Chat view can host `@pi`.
@@ -86,7 +87,7 @@ export function probeChatHost(args: {
       chatDisabled,
       otherAgents,
       available: false,
-      reason: '当前 VS Code 版本没有内置 Chat API（需要 1.90+）。',
+      reason: l10n('nativeChat.vsCodeVersionBuilt'),
     };
   }
   if (chatDisabled) {
@@ -95,7 +96,7 @@ export function probeChatHost(args: {
       chatDisabled,
       otherAgents,
       available: false,
-      reason: '内置 Chat 已被禁用（设置 chat.disableAIFeatures）。',
+      reason: l10n('nativeChat.builtChatDisabledSetting'),
     };
   }
   if (!otherAgents.length) {
@@ -104,7 +105,7 @@ export function probeChatHost(args: {
       chatDisabled: false,
       otherAgents,
       available: false,
-      reason: '没有其他扩展提供默认 chat agent，内置 Chat 会停在欢迎页。安装 Copilot Chat 等任一 chat agent 后即可使用 @pi。',
+      reason: l10n('nativeChat.otherExtensionProvidesDefault'),
     };
   }
   return { apiAvailable: true, chatDisabled: false, otherAgents, available: true };

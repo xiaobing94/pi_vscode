@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n, lang } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { SnapshotService } from '../changes/SnapshotService';
@@ -27,7 +28,7 @@ export class OverviewPanel implements vscode.Disposable {
 
   show(): void {
     if (this.panel) { this.panel.reveal(vscode.ViewColumn.Beside); this.update(); return; }
-    this.panel = vscode.window.createWebviewPanel('pi.changesOverview', 'Pi 变更总览', vscode.ViewColumn.Beside, {
+    this.panel = vscode.window.createWebviewPanel('pi.changesOverview', l10n('overview.changeOverview'), vscode.ViewColumn.Beside, {
       enableScripts: true, retainContextWhenHidden: true,
     });
     this.panel.webview.onDidReceiveMessage((msg) => void this.onMessage(msg));
@@ -69,25 +70,29 @@ export class OverviewPanel implements vscode.Disposable {
     const external = all.filter((c) => c.scope === 'external').length;
     const stats = { A: 0, M: 0, D: 0 };
     for (const c of changes) if (c.status in stats) (stats as any)[c.status]++;
-    const cards = turns.filter((t) => t.changes.some(filtered)).map((t) => {
-      const rows = t.changes.filter(filtered).map((c) => {
+    const cards = turns.filter((rec) => rec.changes.some(filtered)).map((rec) => {
+      const rows = rec.changes.filter(filtered).map((c) => {
         const payload = this.esc(JSON.stringify(c));
         return `<div class="row ${c.scope}"><span class="status ${this.esc(c.status)}">${this.esc(c.status)}</span>` +
           `<a href="#" data-change="${payload}">${this.esc(c.displayPath)}</a>` +
-          `${c.scope === 'external' ? '<span class="warn">⚠ 工程外</span>' : ''}` +
-          `${c.redacted ? '<span class="warn">已脱敏</span>' : ''}</div>`;
+          `${c.scope === 'external' ? `<span class="warn">${l10n('overview.outsideWorkspace')}</span>` : ''}` +
+          `${c.redacted ? `<span class="warn">${l10n('changeTree.redacted')}</span>` : ''}</div>`;
       }).join('');
-      return `<details class="card" open><summary>▸ 第 ${t.meta.turnIndex} 轮 · ${this.esc(t.meta.createdAt.slice(11, 19))} · 「${this.esc((t.meta.prompt ?? t.meta.reason).slice(0, 60))}」 ` +
-        `<span class="badge">${t.changes.length} 项</span>${t.meta.aborted ? '<span class="warn">已中断</span>' : ''}</summary>` +
-        `<div class="meta">模型: ${this.esc(t.meta.model ?? '-')} · 工具: ${this.esc((t.meta.toolCalls ?? []).join(', ') || '-')}</div>${rows}` +
-        `<button type="button" data-turn="${this.esc(t.commit)}">查看本轮差异</button></details>`;
-    }).join('') || '<p>还没有记录到文件改动。</p>';
+      return `<details class="card" open><summary>▸ ${l10n('overview.turn', rec.meta.turnIndex)} · ${this.esc(rec.meta.createdAt.slice(11, 19))} · 「${this.esc((rec.meta.prompt ?? rec.meta.reason).slice(0, 60))}」 ` +
+        `<span class="badge">${l10n('changeTree.itemS', rec.changes.length)}</span>${rec.meta.aborted ? `<span class="warn">${l10n('webview.aborted')}</span>` : ''}</summary>` +
+        `<div class="meta">${l10n('webview.model')}: ${this.esc(rec.meta.model ?? '-')} · ${l10n('overview.tools')}: ${this.esc((rec.meta.toolCalls ?? []).join(', ') || '-')}</div>${rows}` +
+        `<button type="button" data-turn="${this.esc(rec.commit)}">${l10n('webview.showTurnSDiff')}</button></details>`;
+    }).join('') || `<p>${l10n('overview.fileChangesRecordedYet')}</p>`;
 
     const filters = ([
-      ['all', '全部'], ['workspace', '仅工程内'], ['external', '仅工程外'], ['added', '仅新增'], ['deleted', '仅删除'],
+      ['all', l10n('diff.all')],
+      ['workspace', l10n('diff.workspaceOnly')],
+      ['external', l10n('diff.outsideWorkspaceOnly')],
+      ['added', l10n('diff.addedOnly')],
+      ['deleted', l10n('diff.deletedOnly')],
     ] as const).map(([value, label]) => `<button type="button" data-filter="${value}" class="${this.filter === value ? 'active' : ''}">${label}</button>`).join('');
 
-    this.panel.webview.html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Pi 变更总览</title>
+    this.panel.webview.html = `<!doctype html><html lang="${lang()}"><head><meta charset="utf-8"><title>${l10n('overview.changeOverview')}</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <style>
 body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px);color:var(--vscode-foreground);padding:16px;user-select:text}
@@ -102,14 +107,14 @@ input{font:inherit;background:var(--vscode-input-background);color:var(--vscode-
 .warn{color:var(--vscode-inputValidation-warningBorder,#cca700);font-size:.85em}.badge{border:1px solid var(--vscode-panel-border);border-radius:8px;padding:0 6px;font-size:.85em}
 .toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 14px}
 </style></head><body>
-<h1>Pi 变更总览 · 会话「${this.esc(turns[0]?.meta.prompt?.slice(0, 30) ?? service?.currentSessionId.slice(0, 8) ?? '-')}」</h1>
-<div class="summary"><span>会话: ${this.esc(service?.currentSessionId.slice(0, 12) ?? '-')}</span><span>共 ${turns.length} 轮</span>
-<span>累计: +${stats.A} -${stats.D} ~${stats.M}</span><span class="${external ? 'warn' : ''}">⚠ 工程外 ${external} 项</span>
-<span>影子仓库: ${this.esc(service?.shadowGit.dir ?? '-')}</span></div>
-<div class="toolbar">${filters}<input id="search" placeholder="按路径搜索" value="${this.esc(this.search)}">
-<button type="button" data-action="openSessionDiff">查看累计差异</button>
-<button type="button" data-action="exportPatch">导出快照包</button>
-<button type="button" data-action="openExternal">浏览工程外目录</button></div>
+<h1>${l10n('overview.changeOverview')} · ${l10n('overview.session')}「${this.esc(turns[0]?.meta.prompt?.slice(0, 30) ?? service?.currentSessionId.slice(0, 8) ?? '-')}」</h1>
+<div class="summary"><span>${l10n('overview.session')}: ${this.esc(service?.currentSessionId.slice(0, 12) ?? '-')}</span><span>${l10n('overview.turnS', turns.length)}</span>
+<span>${l10n('overview.total')}: +${stats.A} -${stats.D} ~${stats.M}</span><span class="${external ? 'warn' : ''}">${l10n('overview.outsideWorkspace2', external)}</span>
+<span>${l10n('overview.shadowRepository')}: ${this.esc(service?.shadowGit.dir ?? '-')}</span></div>
+<div class="toolbar">${filters}<input id="search" placeholder="${l10n('overview.searchPath')}" value="${this.esc(this.search)}">
+<button type="button" data-action="openSessionDiff">${l10n('overview.showCumulativeDiff')}</button>
+<button type="button" data-action="exportPatch">${l10n('overview.exportSnapshotBundle')}</button>
+<button type="button" data-action="openExternal">${l10n('overview.browseWorkspaceFolder')}</button></div>
 ${cards}
 <script>
 const vscode = acquireVsCodeApi();

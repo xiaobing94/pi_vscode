@@ -1,4 +1,4 @@
-# Pi — Agent with Shadow Git
+# Pi Shadow Agent
 
 **在 VS Code 原生侧栏里使用 [Pi](https://pi.dev) coding agent，并用独立的影子 Git 仓库逐轮记录 AI 造成的文件改动。**
 
@@ -58,7 +58,7 @@ git --version     # ≥ 2.40
 
 ## 安装
 
-**从 Marketplace 安装**：扩展面板搜索 `Pi — Agent with Shadow Git`，或
+**从 Marketplace 安装**：扩展面板搜索 `Pi Shadow Agent`，或
 
 ```bash
 code --install-extension xiaobing.pi-shadow-agent
@@ -252,6 +252,7 @@ npm run package        # 产出 pi-shadow-agent-0.2.0.vsix
 
 ```
 src/core/          Config / Log / WorkspaceRegistry / Diagnostics / AppController
+                   I18n（l10n() 运行时）/ catalogs（语言目录装载）
 src/pi/            Resolver / Jsonl / protocol / RpcGateway / UiBridge
 src/changes/       PathMapper / ShadowGit / Collector / SnapshotService
                    ChangeTree / ShadowDocProvider / DiffCommands / OverviewPanel
@@ -259,12 +260,46 @@ src/changes/       PathMapper / ShadowGit / Collector / SnapshotService
 src/session/       SessionTree / SessionDiscovery / TuiLauncher
 src/views/         ChatViewProvider / StatusBar / PiChatParticipant
 src/editor/        SendCommands / McpPanel
-media/chat/        webview 前端（main.ts / render.ts / clipboard.ts / style.css）
+media/chat/        webview 前端（main.ts / render.ts / i18n.ts / clipboard.ts / style.css）
 pi-extensions/     shadow-snapshot.ts（Pi 侧扩展，jiti 直接加载 .ts）
-test/integration/  helpers + shadow-git + rpc-smoke + session-*
+l10n/              en.json / zh-cn.json（所有界面文案，唯一真源）
+test/integration/  helpers + l10n + shadow-git + rpc-smoke + session-*
 ```
 
 完整的架构、命令规范与验收标准见仓库内 `DESIGN.md`（不随 VSIX 分发）。
+
+### 国际化（i18n）
+
+界面文案**不写在代码里**，代码只使用消息 ID：
+
+```ts
+this.panel = vscode.window.createWebviewPanel('pi.changesOverview', l10n('overview.changeOverview'), …);
+vscode.window.showWarningMessage(l10n('info.items', count));
+```
+
+| 文件 | 作用 |
+|---|---|
+| `l10n/en.json` | **基准目录**：key → 英文文案；新增 key 必须先加在这里 |
+| `l10n/zh-cn.json` | 简体中文；必须与 `en.json` 的 key 完全一致 |
+| `package.nls.json` / `package.nls.zh-cn.json` | `package.json` 里贡献点（命令名、设置项、视图名）的文案 |
+| `src/core/catalogs.ts` | 目录装载、`{0}` 占位符插值、locale 归一化（`zh-Hans`/`zh-tw` → `zh-cn`，未知 → `en`） |
+| `src/core/I18n.ts` | 扩展宿主 `l10n()`；`media/chat/i18n.ts` 是 webview 版的同一份语义 |
+
+**新增一种语言**：
+
+1. 复制 `l10n/en.json` 为 `l10n/<locale>.json` 并翻译；
+2. 在 `src/core/catalogs.ts` 的 `CATALOGS` 里注册，并在 `NLS_LOCALES` 中加上；
+3. 复制 `package.nls.json` 为 `package.nls.<locale>.json`（VS Code 按此文件名识别清单语言）。
+
+不需要改任何业务代码。占位符统一写成 `{0}`、`{1}`（按位置），翻译里可以调换顺序、加空格，但集合必须一致。
+
+**自动化守卫**（`test/integration/l10n.mjs`，随 `npm test` 运行）：
+
+- 各语言 key 集合一致、`l10n/en.json` 有中文残留时报错；
+- 占位符在两种语言之间必须匹配；
+- **源码里出现中文字符串即失败**（防止文案重新写回代码）；
+- `l10n()` 引用的 key 必须存在，目录里的 key 必须被引用（防止改名后留下死翻译）。
+
 
 ## 版本
 

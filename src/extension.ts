@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LOCALE, l10n } from './core/I18n';
 import { Config } from './core/Config';
 import { Log } from './core/Log';
 import { WorkspaceRegistry } from './core/WorkspaceRegistry';
@@ -49,9 +50,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   context.subscriptions.push(trustSub);
   if (!vscode.workspace.isTrusted) {
-    void vscode.window.showWarningMessage('Pi: 工作区未授信，未启动任何 Pi 进程。信任工作区后将自动启动。');
+    void vscode.window.showWarningMessage(l10n('extension.workspaceUntrustedProcessStarted'));
   }
-  log.info('Pi — Agent with Shadow Git activated');
+  log.info(`Pi Coding Agent activated (locale: ${LOCALE})`);
 }
 
 export async function deactivate(): Promise<void> {

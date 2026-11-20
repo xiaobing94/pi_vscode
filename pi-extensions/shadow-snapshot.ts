@@ -28,7 +28,27 @@ interface IpcMessage {
   at?: string;
 }
 
+/**
+ * Status-bar text for the Pi-side extension.
+ *
+ * The host passes the resolved UI language in `PI_VSCODE_LOCALE` when it spawns
+ * `pi --mode rpc`; running the extension inside the Pi TUI falls back to English.
+ * Catalogs live in `l10n/*.json` and are the only place copy is written.
+ */
+import en from '../l10n/en.json';
+import zhCn from '../l10n/zh-cn.json';
+
+const CATALOG: Record<string, string> = String(process.env.PI_VSCODE_LOCALE ?? '').toLowerCase().startsWith('zh')
+  ? zhCn
+  : en;
+function l10n(key: string, ...args: Array<string | number>): string {
+  const template = CATALOG[key] ?? (en as Record<string, string>)[key] ?? key;
+  return template.replace(/\{(\d+)\}/g, (full, index: string) =>
+    Number(index) < args.length ? String(args[Number(index)]) : full);
+}
+
 const TOOL_PATH_KEYS = ['path', 'file', 'filePath', 'target', 'destination', 'output', 'outFile'];
+
 
 function absolute(cwd: string, raw: string): string | undefined {
   if (!raw || typeof raw !== 'string') return undefined;
@@ -126,7 +146,7 @@ export default function (pi: ExtensionAPI) {
     prompt = '';
     settledTurn = false;
     lastCommit = undefined;
-    note(ctx, 'Pi 影子快照 · 就绪');
+    note(ctx, l10n('shadowExt.shadowSnapshotReady'));
     await writeIpc({ sessionId, turn: 0, paths: [], reason: 'session_start' });
   });
 
@@ -162,7 +182,7 @@ export default function (pi: ExtensionAPI) {
       await capturePreImage(String(event.toolCallId ?? ''), touched);
     }
     for (const p of touched) pending.add(p);
-    note(ctx, `Pi 影子快照 · 候选 ${pending.size}`);
+    note(ctx, l10n('shadowExt.shadowSnapshotCandidateS', pending.size));
     await writeIpc({ sessionId, turn, paths: [...pending], toolName, reason: 'tool_call' });
   });
 
@@ -203,7 +223,9 @@ export default function (pi: ExtensionAPI) {
     const requestAt = Date.now();
     await writeIpc({ sessionId, turn, paths, prompt, reason: 'before_settle' });
     lastCommit = await readReply(turn, requestAt, 2000);
-    note(ctx, lastCommit ? `Pi 影子快照 · ${lastCommit.slice(0, 8)}` : 'Pi 影子快照 · 待落库');
+    note(ctx, lastCommit
+      ? l10n('shadowExt.shadowSnapshot', lastCommit.slice(0, 8))
+      : l10n('shadowExt.shadowSnapshotPendingCommit'));
     const data = { sessionId, turn, prompt, paths, commit: lastCommit, at: new Date().toISOString() };
     const draft = { type: 'custom', customType: 'pi.shadow.snapshot', data };
     return { entries: [...(event.entries ?? []), draft] };
@@ -213,14 +235,19 @@ export default function (pi: ExtensionAPI) {
     if (event.aborted) {
       // 被中断的轮次跳过 agent_before_settle：发一条 aborted 信号，由宿主补快照。
       await writeIpc({ sessionId, turn, paths: [...pending], prompt, reason: 'aborted' });
-      note(ctx, 'Pi 影子快照 · 已请求中止快照');
+      note(ctx, l10n('shadowExt.shadowSnapshotAbortSnapshot'));
     } else if (!settledTurn) {
       await writeIpc({ sessionId, turn, paths: [...pending], prompt, reason: 'settled_fallback' });
     }
     settledTurn = false;
     pending = new Set();
     if (ctx?.hasUI) {
-      try { ctx.ui?.notify?.('Pi 影子快照已记录（只读，不会改动工作区）', 'info'); } catch { /* ignore */ }
+      try {
+        ctx.ui?.notify?.(
+          l10n('shadowExt.shadowSnapshotRecordedRead'),
+          'info',
+        );
+      } catch { /* ignore */ }
     }
   });
 

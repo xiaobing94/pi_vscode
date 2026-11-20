@@ -19,8 +19,12 @@ shotcut.png
 企业微信截图_*.png
 dist/*.map
 dist/testable.js
+dist/i18n-check.js
+
+# l10n/*.json ships for the Pi-side extension; host and webview bundle catalogs into dist/.
 
 # Manifest noise
 .gitignore
 package-lock.json
 pi-extensions/*.d.ts
+

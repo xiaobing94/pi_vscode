@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n, lang } from '../core/I18n';
 import type { Config } from '../../src/core/Config';
 import type { Log } from '../../src/core/Log';
 import type { RpcGateway } from '../../src/pi/RpcGateway';
@@ -82,7 +83,7 @@ class ChatSession {
     if (this.sessionName?.trim()) return this.sessionName.trim();
     const first = this.items.find((i) => i.role === 'user' && i.text.trim());
     if (first) return first.text.trim().replace(/\s+/g, ' ').slice(0, 24);
-    return `会话 ${this.index}`;
+    return l10n('chat.session', this.index);
   }
 
   dispose(): void {
@@ -305,27 +306,55 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'chat.js'));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'chat', 'style.css'));
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-    return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+    const L = {
+      tabs: l10n('chat.parallelSessions'),
+      history: l10n('webview.history2'),
+      historyTip: l10n('chat.sessionHistoryBrowseResume'),
+      currentSession: l10n('chat.currentSession'),
+      parallel: l10n('chat.parallel'),
+      parallelTip: l10n('chat.newParallelSessionOwn'),
+      create: l10n('chat.new'),
+      createTip: l10n('chat.startNewSessionTab'),
+      chat: l10n('chat.chat'),
+      greeting: l10n('chat.askQuestionLetChange'),
+      hint: l10n('chat.referenceFilesCommandsEnter'),
+      browseHistory: l10n('webview.browseResumePastSessions'),
+      newSession: l10n('sessionTree.newSession'),
+      undoAll: l10n('chat.generateReversePatchDraft'),
+      keepAll: l10n('chat.showChangesSessionNative'),
+      review: l10n('chat.reviewChangesOneOne'),
+      composerPlaceholder: l10n('chat.message'),
+      composerLabel: l10n('chat.messageInput'),
+      attach: l10n('chat.addImageReferenceFiles'),
+      mention: l10n('chat.referenceWorkspaceFiles'),
+      modelTip: l10n('chat.chooseModelThinkingLevel'),
+      model: l10n('webview.model'),
+      send: l10n('webview.sendEnter'),
+      sendLabel: l10n('webview.send'),
+      idle: l10n('webview.idle'),
+      sessionDiff: l10n('chat.sessionChanges'),
+    };
+    return `<!doctype html><html lang="${lang()}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data: https:; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${styleUri}">
 <title>Pi</title></head><body>
 <div id="app">
-  <div id="tabs" class="tabs" role="tablist" aria-label="并行会话" hidden></div>
+  <div id="tabs" class="tabs" role="tablist" aria-label="${L.tabs}" hidden></div>
   <div id="banner"></div>
   <div id="widgets"></div>
   <div id="session-bar" class="session-bar">
-    <button id="history" class="sess-btn" type="button" title="历史会话：从 ~/.pi/agent/sessions 里浏览并恢复"><span class="sess-ico">⟲</span><span id="history-label">历史会话</span></button>
-    <span id="session-label" class="sess-name" title="当前会话"></span>
+    <button id="history" class="sess-btn" type="button" title="${L.historyTip}"><span class="sess-ico">⟲</span><span id="history-label">${L.history}</span></button>
+    <span id="session-label" class="sess-name" title="${L.currentSession}"></span>
     <span class="spacer"></span>
-    <button id="new-tab" class="sess-btn" type="button" title="新开并行会话：独立的 Pi 进程，可与当前会话同时运行"><span class="sess-ico">⧉</span>并行</button>
-    <button id="new-session" class="sess-btn" type="button" title="在当前标签里新建会话（替换当前对话）"><span class="sess-ico">＋</span>新建</button>
+    <button id="new-tab" class="sess-btn" type="button" title="${L.parallelTip}"><span class="sess-ico">⧉</span>${L.parallel}</button>
+    <button id="new-session" class="sess-btn" type="button" title="${L.createTip}"><span class="sess-ico">＋</span>${L.create}</button>
   </div>
-  <div id="messages" tabindex="0" aria-label="Pi 对话">
-    <div id="empty" class="empty"><div class="logo">π</div><div>向 Pi 提问，或让它修改代码。</div><div class="muted">@ 引用文件 · / 命令 · Enter 发送 · Shift+Enter 换行</div>
+  <div id="messages" tabindex="0" aria-label="${L.chat}">
+    <div id="empty" class="empty"><div class="logo">π</div><div>${L.greeting}</div><div class="muted">${L.hint}</div>
       <div class="empty-actions">
-        <button id="empty-history" class="pill-btn" type="button" title="浏览并恢复历史会话">🕘 历史会话</button>
-        <button id="empty-new" class="pill-btn" type="button" title="新建会话">＋ 新建会话</button>
+        <button id="empty-history" class="pill-btn" type="button" title="${L.browseHistory}">🕘 ${L.history}</button>
+        <button id="empty-new" class="pill-btn" type="button" title="${L.newSession}">＋ ${L.newSession}</button>
       </div>
     </div>
   </div>
@@ -336,30 +365,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         <button id="sc-toggle" class="sc-toggle" type="button" aria-expanded="true"><span class="sc-chev">⌄</span><span id="sc-title">0 Files</span></button>
         <span class="spacer"></span>
         <span id="sc-total" class="stat"></span>
-        <button id="sc-undo" class="sc-act" type="button" title="生成反向补丁草稿（只读，不会自动回滚）">Undo All</button>
-        <button id="sc-keep" class="sc-act" type="button" title="用 VS Code 原生多文件差异查看本会话全部改动">Keep All</button>
-        <button id="sc-review" class="sc-act primary" type="button" title="逐条审查改动">Review</button>
+        <button id="sc-undo" class="sc-act" type="button" title="${L.undoAll}">${l10n('chat.undo')}</button>
+        <button id="sc-keep" class="sc-act" type="button" title="${L.keepAll}">${l10n('chat.keep')}</button>
+        <button id="sc-review" class="sc-act primary" type="button" title="${L.review}">${l10n('chat.review')}</button>
       </div>
       <div id="sc-files" class="sc-files"></div>
     </div>
     <div id="composer-box" class="composer-box">
       <div id="attachments" class="attachments" hidden></div>
-      <textarea id="composer" rows="1" placeholder="给 Pi 发消息…" aria-label="消息输入框"></textarea>
+      <textarea id="composer" rows="1" placeholder="${L.composerPlaceholder}" aria-label="${L.composerLabel}"></textarea>
       <div class="composer-bar">
-        <button id="attach" class="icon-btn" type="button" title="添加图片 / 引用文件">＋</button>
-        <button id="mention" class="icon-btn" type="button" title="引用工作区文件 (@)">@</button>
+        <button id="attach" class="icon-btn" type="button" title="${L.attach}">＋</button>
+        <button id="mention" class="icon-btn" type="button" title="${L.mention}">@</button>
         <span class="spacer"></span>
         <div class="model-wrap">
-          <button id="model" class="model-btn" type="button" title="选择模型和思考级别" aria-haspopup="listbox">
-            <span id="model-name">模型</span><span id="model-level" class="level"></span><span class="chev">⌄</span>
+          <button id="model" class="model-btn" type="button" title="${L.modelTip}" aria-haspopup="listbox">
+            <span id="model-name">${L.model}</span><span id="model-level" class="level"></span><span class="chev">⌄</span>
           </button>
           <div id="model-menu" class="menu" role="listbox" hidden></div>
         </div>
-        <button id="send" class="send-btn" type="button" title="发送 (Enter)" aria-label="发送">↑</button>
+        <button id="send" class="send-btn" type="button" title="${L.send}" aria-label="${L.sendLabel}">↑</button>
       </div>
       <input id="file" type="file" accept="image/*" multiple hidden>
     </div>
-    <div class="status-line"><span id="activity">空闲</span><span class="spacer"></span><span id="usage"></span><button id="session-diff" class="link-btn" type="button" title="用原生多文件差异查看本会话全部改动" hidden>本会话改动</button></div>
+    <div class="status-line"><span id="activity">${L.idle}</span><span class="spacer"></span><span id="usage"></span><button id="session-diff" class="link-btn" type="button" title="${L.keepAll}" hidden>${L.sessionDiff}</button></div>
   </div>
   <div id="slash"></div>
   <div id="toast" hidden></div>
@@ -557,7 +586,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.postS(s, { type: 'thinking', level: event.level });
         break;
       case 'extension_error':
-        this.postS(s, { type: 'banner', text: `Pi 扩展错误: ${String(event.error ?? '')}` });
+        this.postS(s, { type: 'banner', text: l10n('chat.extensionError', String(event.error ?? '')) });
         break;
       case 'compaction_start': case 'auto_retry_start': case 'summarization_retry_scheduled':
         this.postS(s, { type: 'activity', text: this.eventLabel(event) });
@@ -653,7 +682,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   // ------------------------------------------------------------- misc API
 
   private eventLabel(event: AgentEvent): string {
-    return ({ compaction_start: '正在压缩上下文…', auto_retry_start: '自动重试…', summarization_retry_scheduled: '摘要重试排队…' } as Record<string, string>)[event.type] ?? '';
+    return ({
+      compaction_start: l10n('chat.compactingContext'),
+      auto_retry_start: l10n('chat.retryingAutomatically'),
+      summarization_retry_scheduled: l10n('chat.summaryRetryQueued'),
+    } as Record<string, string>)[event.type] ?? '';
   }
 
   setStateInfo(
@@ -690,17 +723,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       this.post({
         type: 'banner',
         level: 'error',
-        text: error || (status === 'stopped' ? 'Pi 进程未运行，发送消息后会自动启动。' : 'Pi 进程不可用。'),
+        text: error || (status === 'stopped'
+          ? l10n('chat.processRunningStartsAutomatically')
+          : l10n('chat.processUnavailable')),
         actions: [
-          { label: '重启 Pi 进程', command: 'pi.restartPi' },
-          { label: '检查运行环境', command: 'pi.checkEnvironment' },
-          { label: '打开诊断面板', command: 'pi.showDiagnostics' },
+          { label: l10n('chat.restart'), command: 'pi.restartPi' },
+          { label: l10n('app.checkEnvironment'), command: 'pi.checkEnvironment' },
+          { label: l10n('chat.openDiagnostics'), command: 'pi.showDiagnostics' },
         ],
       }, only);
       return;
     }
     if (status === 'reconnecting' || status === 'starting') {
-      this.post({ type: 'banner', level: 'warn', text: error || (status === 'starting' ? '正在启动 Pi…' : '正在重连 Pi…') }, only);
+      this.post({
+        type: 'banner',
+        level: 'warn',
+        text: error || (status === 'starting'
+          ? l10n('chat.starting')
+          : l10n('chat.reconnecting')),
+      }, only);
       return;
     }
     this.post({ type: 'banner', text: '' }, only);
@@ -814,7 +855,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       case 'openTurnDiff': {
         const ok = await edits?.openTurnDiff(msg.id ? String(msg.id) : undefined);
-        if (!ok) void vscode.window.showInformationMessage('Pi: 这一轮没有可显示的文件改动。');
+        if (!ok) {
+          void vscode.window.showInformationMessage(l10n('chat.fileChangesShowTurn'));
+        }
         break;
       }
       case 'openTurnFileDiff': await edits?.openTurnFileDiff(String(msg.id ?? ''), String(msg.key ?? '')); break;
@@ -834,7 +877,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       case 'requestFiles': case 'insertFiles': {
         const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,build,out}/**', 2000);
-        const picks = await vscode.window.showQuickPick(files.map((f) => ({ label: vscode.workspace.asRelativePath(f), uri: f })), { canPickMany: true, title: 'Pi: 引用文件 (@)', matchOnDescription: true });
+        const picks = await vscode.window.showQuickPick(
+          files.map((f) => ({ label: vscode.workspace.asRelativePath(f), uri: f })),
+          { canPickMany: true, title: l10n('chat.referenceFiles'), matchOnDescription: true },
+        );
         if (picks?.length) reply({ type: 'insertFiles', paths: picks.map((p) => p.label) });
         break;
       }
@@ -872,15 +918,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     try {
       const data = await this.s().handles.gateway()?.send<{ commands: Array<{ name: string; description?: string; source: string }> }>({ type: 'get_commands' });
       const builtins = [
-        ...(this.config.get().enableTui ? [{ name: 'tui', description: '在终端中打开 Pi TUI', source: 'builtin' }] : []),
-        { name: 'model', description: '切换模型', source: 'builtin' },
-        { name: 'thinking', description: '切换思考级别', source: 'builtin' },
-        { name: 'new', description: '新建会话', source: 'builtin' },
-        { name: 'parallel', description: '新开并行会话（独立 Pi 进程，同时运行）', source: 'builtin' },
-        { name: 'compact', description: '压缩上下文', source: 'builtin' },
-        { name: 'diff', description: '查看本会话改动（原生差异）', source: 'builtin' },
-        { name: 'resume', description: '恢复历史会话', source: 'builtin' },
-        { name: 'status', description: '用量 / 状态', source: 'builtin' },
+        ...(this.config.get().enableTui
+          ? [{ name: 'tui', description: l10n('chat.openTuiTerminal'), source: 'builtin' }]
+          : []),
+        { name: 'model', description: l10n('chat.switchModel'), source: 'builtin' },
+        { name: 'thinking', description: l10n('chat.switchThinkingLevel'), source: 'builtin' },
+        { name: 'new', description: l10n('sessionTree.newSession'), source: 'builtin' },
+        { name: 'parallel', description: l10n('chat.newParallelSessionOwn2'), source: 'builtin' },
+        { name: 'compact', description: l10n('chat.compactContext'), source: 'builtin' },
+        { name: 'diff', description: l10n('chat.showSessionSChanges'), source: 'builtin' },
+        { name: 'resume', description: l10n('chat.resumeSessionHistory'), source: 'builtin' },
+        { name: 'status', description: l10n('chat.usageStatus'), source: 'builtin' },
       ];
       this.commands = [...builtins, ...(data?.commands ?? [])];
       this.post({ type: 'commands', commands: this.commands }, only);

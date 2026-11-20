@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { WorkspaceBinding, WorkspaceRegistry } from '../core/WorkspaceRegistry';
@@ -168,7 +169,7 @@ export class Collector {
         this.addFromArgs(event.toolName, event.args);
         const parent = String(event.parentToolCallId ?? '');
         if (parent) {
-          const item = this.subagents.get(parent) ?? { id: parent, label: `子代理 ${parent.slice(0, 8)}`, toolCalls: 0 };
+          const item = this.subagents.get(parent) ?? { id: parent, label: l10n('collector.subagent', parent.slice(0, 8)), toolCalls: 0 };
           item.toolCalls += 1;
           this.subagents.set(parent, item);
         }

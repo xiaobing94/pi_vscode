@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import { AsyncLock, Signal } from '../core/Signal';
@@ -388,7 +389,7 @@ export class SnapshotService {
     // Subject = the user's question for this turn. That makes `git log` read as
     // a conversation history, one line per round (§6.6).
     const question = (meta.prompt ?? '').trim().replace(/\s+/g, ' ').slice(0, 120) || meta.reason;
-    return `第 ${meta.turnIndex} 轮 · ${question}\n\n` +
+    return l10n('snapshot.turn', meta.turnIndex, question) +
       `session: ${this.sessionId}\n` +
       `at: ${meta.createdAt}\n` +
       `tools: ${(meta.toolCalls ?? []).join(', ') || '-'}\n` +
@@ -442,7 +443,7 @@ export class SnapshotService {
       seen.add(mapped.key);
       touched.add(mapped.key);
       if (mapped.scope === 'external' && !this.mapper.isExternalAllowed(mapped.absPath, candidate.explicitWrite)) {
-        skipped.push({ path: mapped.treePath, reason: '工程外策略拦截' });
+        skipped.push({ path: mapped.treePath, reason: l10n('snapshot.blockedWorkspacePolicy') });
         continue;
       }
       let stat;
@@ -465,7 +466,7 @@ export class SnapshotService {
       } catch (err) { skipped.push({ path: mapped.treePath, reason: `read failed: ${String(err)}` }); continue; }
       if (cfg.redactSecrets && PathMapper.looksSensitive(mapped.absPath, content)) {
         redacted.push({ path: mapped.treePath, size: content.length, sha256: ShadowGit.hash(content) });
-        skipped.push({ path: mapped.treePath, reason: '已脱敏（疑似密钥）' });
+        skipped.push({ path: mapped.treePath, reason: l10n('snapshot.redactedLooksLikeSecret') });
         continue;
       }
       let oid: string;
@@ -603,7 +604,7 @@ export class SnapshotService {
   async repack(): Promise<string> {
     const out = path.join(this.binding.storageUri.fsPath, `${this.sessionKey}.bundle`);
     const head = await this.git.readRef(this.headRef);
-    if (!head) throw new Error('本会话还没有影子提交');
+    if (!head) throw new Error(l10n('snapshot.sessionShadowCommitYet'));
     await this.git.bundle(out, this.headRef);
     const metaPath = path.join(this.binding.storageUri.fsPath, `${this.sessionKey}.meta.json`);
     await vscode.workspace.fs.createDirectory(this.binding.storageUri);

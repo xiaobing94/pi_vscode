@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Log } from '../core/Log';
 import type { SnapshotService } from '../changes/SnapshotService';
 
@@ -12,7 +13,10 @@ export class ExternalBrowser {
     const service = this.snapshots();
     if (!service) return;
     const changes = service.getChanges().filter((c) => c.scope === 'external');
-    if (!changes.length) { void vscode.window.showInformationMessage('Pi: 本次会话没有工程外改动。'); return; }
+    if (!changes.length) {
+      void vscode.window.showInformationMessage(l10n('external.sessionWorkspaceChanges'));
+      return;
+    }
     const root = path.join(service.shadowGit.dir, '..', 'external-preview', service.currentSessionKey);
     await fs.mkdir(root, { recursive: true });
     let written = 0;
@@ -27,17 +31,17 @@ export class ExternalBrowser {
     }
     const readme = path.join(root, 'README.md');
     await fs.writeFile(readme, [
-      '# ⚠ Pi 工程外改动（只读快照）',
+      l10n('external.workspaceChangesReadOnly'),
       '',
-      '这里是从影子仓库导出的**副本**，用于浏览/复制。',
-      'Pi 绝不会把这些文件写回原绝对路径，也不会修改用户仓库。',
+      l10n('external.theseCopiesExportedShadow'),
+      l10n('external.neverWritesTheseFiles'),
       '',
-      ...changes.map((c) => `- \`${c.displayPath}\` · ${c.status} · 第 ${c.turnIndex} 轮`),
+      ...changes.map((c) => l10n('external.turn', c.displayPath, c.status, c.turnIndex)),
     ].join('\n'), 'utf8');
     this.log.info(`external preview exported: ${written} file(s) -> ${root}`);
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(readme));
     await vscode.window.showTextDocument(doc, { preview: true });
     void vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(root));
-    void vscode.window.showInformationMessage(`Pi: 已导出 ${written} 个工程外文件副本到 ${root}（只读快照，不会写回）。`);
+    void vscode.window.showInformationMessage(l10n('external.exportedWorkspaceFileCopies', written, root));
   }
 }

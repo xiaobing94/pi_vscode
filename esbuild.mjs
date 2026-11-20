@@ -47,10 +47,21 @@ const testBundle = {
   external: ['vscode'],
 };
 
+/** Localization runtime only: lets tests check catalogs without the VS Code API. */
+/** @type {import('esbuild').BuildOptions} */
+const i18nCheck = {
+  ...shared,
+  entryPoints: ['src/i18nCheck.ts'],
+  outfile: 'dist/i18n-check.js',
+  platform: 'node',
+  format: 'cjs',
+  target: 'node22',
+};
+
 if (watch) {
-  const [a, b, c] = await Promise.all([context(extension), context(chat), context(testBundle)]);
-  await Promise.all([a.watch(), b.watch(), c.watch()]);
+  const [a, b, c, d] = await Promise.all([context(extension), context(chat), context(testBundle), context(i18nCheck)]);
+  await Promise.all([a.watch(), b.watch(), c.watch(), d.watch()]);
   console.log('watching...');
 } else {
-  await Promise.all([build(extension), build(chat), build(testBundle)]);
+  await Promise.all([build(extension), build(chat), build(testBundle), build(i18nCheck)]);
 }

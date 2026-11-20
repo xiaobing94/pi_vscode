@@ -39,3 +39,35 @@ test('switchSession refuses a missing session file and shows a warning', { timeo
     await rm(testRoot, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
   }
 });
+
+test('the same warning follows the UI language (en) without code changes', { timeout: 30_000 }, async () => {
+  const vscode = makeVscodeMock({ language: 'en' });
+  const commands = new Map();
+  const warnings = [];
+  vscode.commands.registerCommand = (name, fn) => { commands.set(name, fn); return new vscode.Disposable(); };
+  vscode.window.showWarningMessage = async (m) => { warnings.push(String(m)); return undefined; };
+  vscode.workspace.workspaceFolders = [{ name: 'proj', uri: vscode.Uri.file(path.join(root, 'test')), index: 0 }];
+  vscode.workspace.getWorkspaceFolder = () => vscode.workspace.workspaceFolders[0];
+  const testRoot = await mkdtemp(path.join(tmpdir(), 'pi-vscode-switch-guard-en-'));
+  const context = {
+    extensionUri: vscode.Uri.file(root),
+    globalStorageUri: vscode.Uri.file(path.join(testRoot, 'global')),
+    storageUri: vscode.Uri.file(path.join(testRoot, 'workspace')),
+    subscriptions: [],
+    globalState: { get: () => [], update: async () => {} },
+    extension: { packageJSON: { version: '0.2.0' } },
+  };
+  const exports = loadBundle(path.join(root, 'dist', 'extension.js'), vscode);
+  try {
+    await exports.activate(context);
+    const stale = path.join(testRoot, '2026-01-01T00-00-00-000Z_deleted.jsonl');
+    await commands.get('pi.switchSession')({ sessionPath: stale });
+    assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`);
+    assert.match(warnings[0], /the session file no longer exists/);
+    assert.doesNotMatch(warnings[0], /[\u4e00-\u9fff]/, 'no Chinese leaks into the English UI');
+  } finally {
+    await exports.deactivate();
+    for (const d of context.subscriptions) d.dispose?.();
+    await rm(testRoot, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+  }
+});

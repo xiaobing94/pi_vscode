@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **Pi — Agent with Shadow Git** are documented here.
+All notable changes to **Pi Shadow Agent** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and this
 project adheres to [Semantic Versioning](https://semver.org/).
 
@@ -8,21 +8,28 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Parallel sessions**: the chat view gets a tab strip; every tab is its own
+- **Full internationalization**: every user-facing string now lives in `l10n/*.json`
+  and code refers to message ids (`l10n('overview.changeOverview')`), so a typo or a
+  new language never requires touching TypeScript. `package.nls.json` /
+  `package.nls.zh-cn.json` localize the manifest (command titles, settings, view names).
+  Adding a language = one catalog file + one `package.nls.<locale>.json`.
+- `test/integration/l10n.mjs` guards the catalogs: matching key sets, identical
+  placeholder sets, translated (not copied) values, no Chinese left in `en.json`,
+  **no Chinese string literals in the source**, and no missing or unused `l10n()` keys.
+
+### Changed
+
+- **Marketplace identity**: display name is now `Pi Shadow Agent` (previously
+  `Pi — Agent with Shadow Git`), with a benefit-first description and search keywords.
+  The extension `name` stays `pi-shadow-agent`; internal view / container / chat
+  participant ids are unchanged, so the VSIX upgrade path and saved state still work.
+- Parallel sessions: the chat view gets a tab strip; every tab is its own
   `pi --mode rpc` process, so several conversations run at the same time.
   Background tabs keep streaming off-screen (spinner while running, dot when
   finished) and are shown instantly when selected. Open with the session
   bar's 「⧉ 并行」, the tab strip's ＋, `/parallel`, `Ctrl+Alt+T` or
   `Pi: 新开并行会话`; resume a history session in a new tab from the
   「Pi 会话」 context menu. A session file is never opened by two tabs.
-
-### Changed
-
-- **Marketplace identity**: the extension `name` is now `pi-shadow-agent` and the
-  display name is `Pi — Agent with Shadow Git`, so it can be published next to
-  the existing `pi-vscode` / `Pi for VS Code` listings. Internal ids (view,
-  view container and chat participant ids) are unchanged, so the VSIX upgrade
-  path and saved user state still work.
 - `pi.multiSession` is deprecated; parallel sessions are always available.
 - Webview messages carry the tab they came from, so abort / queue / diff
   actions always hit the right session even if the tab changed meanwhile.

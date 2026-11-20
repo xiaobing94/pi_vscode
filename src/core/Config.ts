@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from './I18n';
 
 export interface PiConfigShape {
   executablePath: string;
@@ -44,7 +45,9 @@ const DEFAULTS: PiConfigShape = {
   reviewOnSave: {
     enabled: false,
     debounceMs: 3000,
-    prompt: '请审查以下文件保存后的改动，指出潜在问题（只回答，不修改文件）：\n${files}',
+    get prompt() {
+      return l10n('config.reviewChangesFilesBelow');
+    },
   },
   shadowGit: {
     enabled: true,

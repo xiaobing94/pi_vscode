@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n, lang } from './I18n';
 import type { Config } from '../core/Config';
 import type { Log } from '../core/Log';
 import type { RpcGateway } from '../pi/RpcGateway';
@@ -24,7 +25,7 @@ export class DiagnosticsPanel {
 
   async show(): Promise<void> {
     if (this.panel) { this.panel.reveal(); this.update(); return; }
-    this.panel = vscode.window.createWebviewPanel('pi.diagnostics', 'Pi 诊断', vscode.ViewColumn.Beside, {
+    this.panel = vscode.window.createWebviewPanel('pi.diagnostics', l10n('diagnostics.diagnostics'), vscode.ViewColumn.Beside, {
       enableScripts: false, retainContextWhenHidden: true,
     });
     this.panel.onDidDispose(() => { this.panel = undefined; });
@@ -42,7 +43,7 @@ export class DiagnosticsPanel {
 
   private candidateLines(): string {
     const list = this.candidatesProvider() ?? [];
-    if (!list.length) return '（无）';
+    if (!list.length) return l10n('diagnostics.none');
     const lines: string[] = [];
     for (const c of list) {
       lines.push(`${c.exists ? '✓' : '✗'} ${c.source}`);
@@ -58,18 +59,29 @@ export class DiagnosticsPanel {
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c] ?? c));
     const g = s.gateway;
-    this.panel.webview.html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>Pi 诊断</title>
+    const labels = {
+      status: l10n('diagnostics.status'),
+      source: l10n('diagnostics.source'),
+      version: l10n('diagnostics.version'),
+      session: l10n('diagnostics.sessionState'),
+      usage: l10n('diagnostics.usage'),
+      candidates: l10n('diagnostics.runtimeCandidates'),
+      config: l10n('diagnostics.configuration'),
+      log: l10n('diagnostics.logLastEntries', s.lines.length),
+      title: l10n('diagnostics.diagnostics'),
+    };
+    this.panel.webview.html = `<!doctype html><html lang="${lang()}"><meta charset="utf-8"><title>${labels.title}</title>
 <style>body{font-family:var(--vscode-editor-font-family);font-size:12px;padding:16px;color:var(--vscode-foreground)}
 h2{margin:18px 0 6px}pre{white-space:pre-wrap;word-break:break-word;background:var(--vscode-textBlockQuote-background);padding:10px;max-height:45vh;overflow:auto}
 .k{color:var(--vscode-descriptionForeground)}</style>
-<h1>Pi 诊断</h1>
-<p class="k">状态：<b>${esc(g?.status ?? 'stopped')}</b> · 来源：${esc(g?.runtime?.source ?? '-')} · 版本：${esc(g?.runtime?.version ?? '-')}</p>
+<h1>${labels.title}</h1>
+<p class="k">${labels.status}: <b>${esc(g?.status ?? 'stopped')}</b> · ${labels.source}: ${esc(g?.runtime?.source ?? '-')} · ${labels.version}: ${esc(g?.runtime?.version ?? '-')}</p>
 <p>${esc(g?.error ?? '')}</p>
-${g?.state ? `<h2>会话状态</h2><pre>${esc(JSON.stringify(g.state, null, 2))}</pre>` : ''}
-${g?.stats ? `<h2>用量</h2><pre>${esc(JSON.stringify(g.stats, null, 2))}</pre>` : ''}
-<h2>运行时候选路径</h2><pre>${esc(this.candidateLines())}</pre>
-<h2>配置</h2><pre>${esc(JSON.stringify(s.config, null, 2))}</pre>
-<h2>日志（最近 ${s.lines.length} 条）</h2><pre>${esc(s.lines.join('\n'))}</pre>
+${g?.state ? `<h2>${labels.session}</h2><pre>${esc(JSON.stringify(g.state, null, 2))}</pre>` : ''}
+${g?.stats ? `<h2>${labels.usage}</h2><pre>${esc(JSON.stringify(g.stats, null, 2))}</pre>` : ''}
+<h2>${labels.candidates}</h2><pre>${esc(this.candidateLines())}</pre>
+<h2>${labels.config}</h2><pre>${esc(JSON.stringify(s.config, null, 2))}</pre>
+<h2>${labels.log}</h2><pre>${esc(s.lines.join('\n'))}</pre>
 <h2>pi stderr</h2><pre>${esc((g?.stderr ?? []).join('\n'))}</pre></html>`;
   }
 

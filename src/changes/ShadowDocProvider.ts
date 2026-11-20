@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { l10n } from '../core/I18n';
 import type { Log } from '../core/Log';
 import type { SnapshotService } from './SnapshotService';
 
@@ -49,13 +50,12 @@ export class ShadowDocProvider implements vscode.TextDocumentContentProvider, vs
     const d = ShadowDocProvider.decode(uri);
     if (d.commit === 'empty' || d.missing) return '';
     const service = this.snapshots();
-    if (!service) return '影子仓库未初始化';
+    if (!service) return l10n('shadowDoc.shadowRepositoryInitialized');
     const blob = await service.readBlob(d.commit, d.treePath);
     if (token.isCancellationRequested) return '';
     if (!blob) return '';
     if (this.isBinary(blob)) {
-      return `[Pi 影子仓库] 二进制内容（${blob.length} 字节），不强行文本化。\n` +
-        `路径: ${d.treePath}\n提交: ${d.commit}\n侧: ${d.side}\n使用「Pi: 复制该文件内容」或「Pi: 导出会话快照包」获取原始字节。`;
+      return l10n('shadowDoc.shadowRepositoryBinaryContent', blob.length, d.treePath, d.commit, d.side);
     }
     return blob.toString('utf8');
   }
