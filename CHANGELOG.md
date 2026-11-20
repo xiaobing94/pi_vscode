@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
 ### Added
 
 - **Full internationalization**: every user-facing string now lives in `l10n/*.json`
@@ -133,4 +135,4 @@ First public release.
 - `@pi` in the built-in Chat view requires an extension that contributes a
   default chat agent (e.g. Copilot Chat); otherwise use the Pi panel.
 
-<!-- Tags: 0.2.0 -->
+<!-- Tags: 0.2.0, 0.3.0 -->

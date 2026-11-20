@@ -67,7 +67,7 @@ code --install-extension xiaobing.pi-shadow-agent
 **从 VSIX 安装**（离线 / 内测版本）：
 
 ```bash
-code --install-extension pi-shadow-agent-0.2.0.vsix
+code --install-extension pi-shadow-agent-0.3.0.vsix
 ```
 
 安装后重新加载窗口即可。
@@ -241,7 +241,7 @@ npm run build          # esbuild → dist/extension.js、dist/chat.js
 npm run watch          # 增量构建
 npm run typecheck      # tsc --noEmit
 npm test               # 构建 + node --test 集成测试
-npm run package        # 产出 pi-shadow-agent-0.2.0.vsix
+npm run package        # 产出 pi-shadow-agent-0.3.0.vsix（文件名取自 package.json 版本）
 ```
 
 调试：VS Code 打开本目录按 `F5`（`.vscode/launch.json` 已配好扩展开发宿主）。
@@ -303,7 +303,7 @@ vscode.window.showWarningMessage(l10n('info.items', count));
 
 ## 版本
 
-当前 `0.2.0`。P0 + P1 + P2 全量能力已实现，P2 部分（多会话、保存即审查、子代理视图）为可选 / 实验性。
+当前 `0.3.0`。P0 + P1 + P2 全量能力已实现，P2 部分（多会话、保存即审查、子代理视图）为可选 / 实验性。
 
 ## License
 
